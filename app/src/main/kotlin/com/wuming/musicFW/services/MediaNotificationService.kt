@@ -15,41 +15,82 @@ class MediaNotificationService : NotificationListenerService() {
     companion object {
         var onSongChanged: ((SongInfo) -> Unit)? = null
         var onPositionUpdate: ((Long) -> Unit)? = null
-
-        private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+        var onLyricLine: ((String) -> Unit)? = null
+        private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
         fun setCallbacks(
             onSongChanged: ((SongInfo) -> Unit)? = null,
-            onPositionUpdate: ((Long) -> Unit)? = null
+            onPositionUpdate: ((Long) -> Unit)? = null,
+            onLyricLine: ((String) -> Unit)? = null
         ) {
             this.onSongChanged = onSongChanged
             this.onPositionUpdate = onPositionUpdate
+            this.onLyricLine = onLyricLine
         }
     }
 
-    private var mediaController: MediaController? = null
+    private var currentController: MediaController? = null
     private var currentSongInfo: SongInfo? = null
-    private var positionUpdateJob: Job? = null
+    private var positionJob: Job? = null
+    private var pollJob: Job? = null
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
         val pkg = sbn.packageName ?: return
-        if (isMusicApp(pkg)) queryCurrentMedia()
+        if (!isMusicApp(pkg)) return
+
+        // 部分音乐 App（如 QQ音乐）会把歌词放在通知正文
+        try {
+            val extras = sbn.notification.extras ?: return
+            val lyric = extras.getString(android.app.Notification.EXTRA_INFO_TEXT) ?: ""
+                       .ifEmpty { extras.getString(android.app.Notification.EXTRA_TEXT) ?: "" }
+            if (lyric.isNotEmpty() && lyric.length > 2 && !lyric.contains(" - ")) {
+                onLyricLine?.invoke(lyric)
+                LogHelper.d("通知歌词: $lyric")
+            }
+        } catch (_: Exception) {}
+
+        queryCurrentMedia()
     }
 
-    override fun onNotificationRemoved(sbn: StatusBarNotification?) {}
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        // 通知被移除 → 延迟后重新扫描（给新 App 启动时间）
+        scope.launch { delay(1000); queryCurrentMedia() }
+    }
 
     override fun onListenerConnected() {
         super.onListenerConnected()
         LogHelper.d("媒体监听服务已连接")
         queryCurrentMedia()
+        startPolling()
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         LogHelper.d("媒体监听服务已断开")
-        stopPositionUpdates()
+        stopAll()
     }
+
+    // ── 定期轮询（解决同通知更新不触发回调的问题） ──
+
+    private fun startPolling() {
+        stopPolling()
+        pollJob = scope.launch {
+            while (isActive) {
+                delay(2000)
+                // 只在有播放状态或没有数据时轮询
+                if (currentController?.playbackState?.state == PlaybackState.STATE_PLAYING
+                    || currentSongInfo == null) {
+                    queryCurrentMedia()
+                }
+            }
+        }
+    }
+
+    private fun stopPolling() { pollJob?.cancel(); pollJob = null }
+    private fun stopAll() { stopPolling(); stopPositionUpdates() }
+
+    // ── 音乐 App 检测 ──
 
     private fun isMusicApp(pkg: String): Boolean {
         return pkg.contains("netease") || pkg.contains("cloudmusic") ||
@@ -57,6 +98,8 @@ class MediaNotificationService : NotificationListenerService() {
                pkg.contains("kuwo") || pkg.contains("spotify") ||
                pkg.contains("youtube")
     }
+
+    // ── 扫描活跃 MediaSession ──
 
     private fun queryCurrentMedia() {
         try {
@@ -67,23 +110,29 @@ class MediaNotificationService : NotificationListenerService() {
                 ComponentName(this, MediaNotificationService::class.java)
             )
 
+            // 遍历所有 controller，注册回调并匹配歌曲
+            val musicControllers = controllers.filter { c ->
+                val pkg = c.packageName ?: return@filter false
+                isMusicApp(pkg) || c.metadata != null
+            }
+
             // 优先取正在播放的
-            val playing = controllers
-                .filter { it.playbackState?.state == PlaybackState.STATE_PLAYING }
-                .filter { it.metadata != null }
-                .firstOrNull()
-            if (playing != null) { handleMediaController(playing); return }
+            val playing = musicControllers
+                .firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING && it.metadata != null }
+            if (playing != null) { handleController(playing); return }
 
             // 其次取第一个有元数据的
-            for (c in controllers) {
-                if (c.metadata != null) { handleMediaController(c); return }
+            for (c in musicControllers) {
+                if (c.metadata != null) { handleController(c); return }
             }
         } catch (e: Exception) {
-            LogHelper.e("获取媒体信息失败: ${e.message}")
+            LogHelper.e("扫描媒体失败: ${e.message}")
         }
     }
 
-    private fun handleMediaController(controller: MediaController) {
+    // ── 处理单个 MediaController ──
+
+    private fun handleController(controller: MediaController) {
         val meta = controller.metadata ?: return
         val title = meta.getString(android.media.MediaMetadata.METADATA_KEY_TITLE) ?: return
         val artist = meta.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST) ?: "未知艺术家"
@@ -96,9 +145,10 @@ class MediaNotificationService : NotificationListenerService() {
             LogHelper.d("歌曲更新: $title - $artist")
         }
 
-        if (mediaController !== controller) {
-            mediaController?.unregisterCallback(mediaCallback)
-            mediaController = controller
+        // 如果 controller 变了，重新注册回调
+        if (currentController !== controller) {
+            currentController?.unregisterCallback(mediaCallback)
+            currentController = controller
             controller.registerCallback(mediaCallback)
         }
 
@@ -113,7 +163,7 @@ class MediaNotificationService : NotificationListenerService() {
         override fun onPlaybackStateChanged(state: PlaybackState?) {
             state?.let {
                 if (it.state == PlaybackState.STATE_PLAYING) {
-                    mediaController?.let { c -> startPositionUpdates(c) }
+                    currentController?.let { c -> startPositionUpdates(c) }
                 } else {
                     stopPositionUpdates()
                 }
@@ -123,11 +173,18 @@ class MediaNotificationService : NotificationListenerService() {
         override fun onMetadataChanged(meta: android.media.MediaMetadata?) {
             queryCurrentMedia()
         }
+
+        override fun onSessionDestroyed() {
+            LogHelper.d("媒体会话已销毁，重新扫描")
+            scope.launch { delay(500); queryCurrentMedia() }
+        }
     }
+
+    // ── 播放位置更新 ──
 
     private fun startPositionUpdates(controller: MediaController) {
         stopPositionUpdates()
-        positionUpdateJob = coroutineScope.launch {
+        positionJob = scope.launch {
             while (isActive) {
                 val state = controller.playbackState
                 if (state?.state == PlaybackState.STATE_PLAYING) {
@@ -139,14 +196,11 @@ class MediaNotificationService : NotificationListenerService() {
     }
 
     private fun stopPositionUpdates() {
-        positionUpdateJob?.cancel()
-        positionUpdateJob = null
+        positionJob?.cancel(); positionJob = null
     }
 
     override fun onDestroy() {
-        mediaController?.unregisterCallback(mediaCallback)
-        stopPositionUpdates()
-        coroutineScope.cancel()
-        super.onDestroy()
+        currentController?.unregisterCallback(mediaCallback)
+        stopAll(); scope.cancel(); super.onDestroy()
     }
 }

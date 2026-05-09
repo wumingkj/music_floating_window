@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -7,205 +8,36 @@
     android:background="#F5F5F5"
     tools:context=".MainActivity">
 
-    <!-- 顶部工具栏 -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="52dp"
+        android:layout_height="48dp"
         android:background="#6200EE"
         android:gravity="center_vertical"
         android:paddingHorizontal="16dp">
-
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="音乐悬浮窗"
-            android:textSize="18sp"
+            android:textSize="17sp"
             android:textStyle="bold"
             android:textColor="#FFFFFF" />
-
-        <TextView
-            android:id="@+id/statusTextView"
-            android:layout_width="wrap_content"
-            android:layout_height="24dp"
-            android:text="就绪"
-            android:textSize="11sp"
-            android:textColor="#FFFFFF"
-            android:background="#4CAF50"
-            android:gravity="center"
-            android:paddingHorizontal="10dp" />
     </LinearLayout>
 
-    <!-- 操作按钮区 -->
-    <LinearLayout
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/tabLayout"
         android:layout_width="match_parent"
-        android:layout_height="46dp"
-        android:orientation="horizontal"
+        android:layout_height="42dp"
         android:background="#FFFFFF"
-        android:elevation="2dp">
+        app:tabSelectedTextColor="#6200EE"
+        app:tabTextColor="#999999"
+        app:tabIndicatorColor="#6200EE"
+        app:tabIndicatorHeight="3dp"
+        app:tabMode="fixed" />
 
-        <Button
-            android:id="@+id/listenButton"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:text="开始监听"
-            android:textSize="13sp"
-            android:background="@null"
-            android:textColor="#6200EE" />
-
-        <View
-            android:layout_width="1dp"
-            android:layout_height="match_parent"
-            android:background="#E0E0E0" />
-
-        <Button
-            android:id="@+id/permissionButton"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:text="权限设置"
-            android:textSize="13sp"
-            android:background="@null"
-            android:textColor="#6200EE" />
-
-        <View
-            android:layout_width="1dp"
-            android:layout_height="match_parent"
-            android:background="#E0E0E0" />
-
-        <Button
-            android:id="@+id/floatingButton"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:text="开启悬浮"
-            android:textSize="13sp"
-            android:background="@null"
-            android:textColor="#6200EE" />
-    </LinearLayout>
-
-    <!-- 歌曲信息卡片 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:background="#FFFFFF"
-        android:elevation="1dp"
-        android:layout_margin="8dp"
-        android:padding="12dp">
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="歌曲信息"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:textColor="#999999"
-            android:paddingBottom="6dp" />
-
-        <TextView
-            android:id="@+id/songNameTextView"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="—"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="#212121" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:paddingTop="4dp">
-
-            <TextView
-                android:id="@+id/artistTextView"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="—"
-                android:textSize="13sp"
-                android:textColor="#757575" />
-
-            <TextView
-                android:id="@+id/albumTextView"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="—"
-                android:textSize="13sp"
-                android:textColor="#757575"
-                android:gravity="end" />
-        </LinearLayout>
-
-        <TextView
-            android:id="@+id/positionTextView"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="00:00"
-            android:textSize="12sp"
-            android:textColor="#FF9800"
-            android:paddingTop="4dp" />
-    </LinearLayout>
-
-    <!-- 歌词显示 -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="歌词"
-        android:textSize="12sp"
-        android:textStyle="bold"
-        android:textColor="#999999"
-        android:paddingHorizontal="16dp"
-        android:paddingBottom="2dp" />
-
-    <ScrollView
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/viewPager"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="#FFFFFF"
-        android:elevation="1dp"
-        android:layout_marginHorizontal="8dp"
-        android:layout_marginBottom="4dp"
-        android:padding="12dp">
-
-        <TextView
-            android:id="@+id/lyricsTextView"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="等待获取歌词..."
-            android:textSize="15sp"
-            android:textColor="#424242"
-            android:lineSpacingExtra="6dp" />
-    </ScrollView>
-
-    <!-- 调试日志 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical">
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="日志"
-            android:textSize="11sp"
-            android:textColor="#999999"
-            android:paddingHorizontal="16dp"
-            android:paddingVertical="2dp" />
-
-        <TextView
-            android:id="@+id/debugLogTextView"
-            android:layout_width="match_parent"
-            android:layout_height="60dp"
-            android:background="#1E1E1E"
-            android:textColor="#00FF00"
-            android:textSize="9sp"
-            android:fontFamily="monospace"
-            android:padding="4dp"
-            android:scrollbars="vertical"
-            android:text="等待初始化...\n" />
-    </LinearLayout>
-
+        android:layout_weight="1" />
 </LinearLayout>

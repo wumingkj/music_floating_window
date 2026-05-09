@@ -5,51 +5,57 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:background="@drawable/floating_bg"
-    android:padding="16dp"
+    android:padding="14dp"
     android:minWidth="200dp"
     android:elevation="6dp">
 
-    <!-- 拖拽指示条 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <TextView
+            android:id="@+id/floatingLockBtn"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:text="\uD83D\uDD13"
+            android:textSize="16sp"
+            android:gravity="center" />
+        <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+        <TextView
+            android:id="@+id/floatingCloseBtn"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:text="\u2715"
+            android:textSize="16sp"
+            android:textColor="#88FFFFFF"
+            android:gravity="center" />
+    </LinearLayout>
+
     <View
         android:layout_width="36dp"
-        android:layout_height="4dp"
+        android:layout_height="3dp"
         android:layout_gravity="center_horizontal"
         android:background="#55FFFFFF"
-        android:layout_marginBottom="8dp" />
+        android:layout_marginBottom="6dp" />
 
-    <!-- 歌曲标题 -->
     <TextView
         android:id="@+id/floatingSongTitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text=""
-        android:textSize="14sp"
+        android:textSize="13sp"
         android:textStyle="bold"
         android:textColor="#FFFFFF"
         android:singleLine="true"
         android:ellipsize="end" />
 
-    <!-- 当前歌词 -->
     <TextView
         android:id="@+id/floatingLyricText"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="歌词加载中..."
-        android:textSize="18sp"
+        android:textSize="20sp"
         android:textColor="#FFD700"
         android:paddingTop="4dp"
-        android:maxWidth="280dp" />
-
-    <!-- 关闭按钮 -->
-    <TextView
-        android:id="@+id/floatingCloseBtn"
-        android:layout_width="30dp"
-        android:layout_height="30dp"
-        android:layout_gravity="end"
-        android:layout_marginTop="4dp"
-        android:text="✕"
-        android:textSize="14sp"
-        android:textColor="#88FFFFFF"
-        android:gravity="center" />
-
+        android:maxWidth="300dp" />
 </LinearLayout>

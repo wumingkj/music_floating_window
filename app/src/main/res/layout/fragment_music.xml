@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F5F5F5"
+    android:padding="8dp">
+
+    <!-- 歌曲信息卡片 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#FFFFFF"
+        android:elevation="1dp"
+        android:padding="12dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="正在播放"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="#999999"
+            android:paddingBottom="6dp" />
+
+        <TextView
+            android:id="@+id/songNameTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="—"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="#212121"
+            android:singleLine="true"
+            android:ellipsize="end" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingTop="4dp">
+
+            <TextView
+                android:id="@+id/artistTextView"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="—"
+                android:textSize="13sp"
+                android:textColor="#757575" />
+
+            <TextView
+                android:id="@+id/albumTextView"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="—"
+                android:textSize="13sp"
+                android:textColor="#757575"
+                android:gravity="end" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/positionTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="00:00"
+            android:textSize="13sp"
+            android:textColor="#FF9800"
+            android:paddingTop="6dp" />
+    </LinearLayout>
+
+    <!-- 歌词显示 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="歌词"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:textColor="#999999"
+        android:paddingTop="8dp"
+        android:paddingBottom="2dp"
+        android:paddingHorizontal="4dp" />
+
+    <ScrollView
+        android:id="@+id/lyricsScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#FFFFFF"
+        android:elevation="1dp"
+        android:padding="12dp">
+
+        <TextView
+            android:id="@+id/lyricsTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="等待获取歌词..."
+            android:textSize="15sp"
+            android:textColor="#424242"
+            android:lineSpacingExtra="6dp" />
+    </ScrollView>
+
+    <!-- 控制按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="46dp"
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal"
+        android:background="#FFFFFF"
+        android:elevation="1dp">
+
+        <Button
+            android:id="@+id/listenButton"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="开始监听"
+            android:textSize="13sp"
+            android:background="@null"
+            android:textColor="#6200EE" />
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:background="#E0E0E0" />
+
+        <Button
+            android:id="@+id/permissionButton"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="权限设置"
+            android:textSize="13sp"
+            android:background="@null"
+            android:textColor="#6200EE" />
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:background="#E0E0E0" />
+
+        <Button
+            android:id="@+id/floatingButton"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="开启悬浮"
+            android:textSize="13sp"
+            android:background="@null"
+            android:textColor="#6200EE" />
+    </LinearLayout>
+</LinearLayout>

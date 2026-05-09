@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F5F5F5">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <!-- 权限区 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#FFFFFF"
+            android:elevation="1dp"
+            android:padding="14dp"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="▎通知监听权限"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="#212121" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="读取音乐App通知以获取歌曲信息"
+                android:textSize="12sp"
+                android:textColor="#999999"
+                android:paddingTop="2dp" />
+            <Button android:id="@+id/settingsPermBtn"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:layout_marginTop="8dp"
+                android:text="前往设置开启"
+                android:textSize="12sp"
+                android:backgroundTint="#6200EE" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#FFFFFF"
+            android:elevation="1dp"
+            android:padding="14dp"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="▎悬浮窗权限"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="#212121" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="在其他应用上方显示歌词"
+                android:textSize="12sp"
+                android:textColor="#999999"
+                android:paddingTop="2dp" />
+            <Button android:id="@+id/settingsOverlayBtn"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:layout_marginTop="8dp"
+                android:text="前往设置开启"
+                android:textSize="12sp"
+                android:backgroundTint="#FF9800" />
+        </LinearLayout>
+
+        <!-- 悬浮窗样式设置 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#FFFFFF"
+            android:elevation="1dp"
+            android:padding="14dp"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="▎悬浮窗样式"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="#212121" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="自定义歌词显示效果"
+                android:textSize="12sp"
+                android:textColor="#999999"
+                android:paddingBottom="8dp" />
+
+            <TextView android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="文本样式"
+                android:textSize="13sp"
+                android:textColor="#757575" />
+            <RadioGroup
+                android:id="@+id/styleGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <RadioButton android:id="@+id/styleNormal" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="经典白" android:textSize="13sp" />
+                <RadioButton android:id="@+id/styleNeon" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="霓虹青" android:textSize="13sp" />
+                <RadioButton android:id="@+id/styleRainbow" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="彩虹" android:textSize="13sp" />
+            </RadioGroup>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingTop="8dp">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="打字效果"
+                    android:textSize="13sp"
+                    android:textColor="#757575" />
+                <Switch android:id="@+id/typingSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="字体大小"
+                android:textSize="13sp"
+                android:textColor="#757575"
+                android:paddingTop="8dp" />
+            <SeekBar android:id="@+id/fontSizeSeek"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="20"
+                android:progress="8" />
+            <TextView android:id="@+id/fontSizeLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="20sp"
+                android:textSize="12sp"
+                android:textColor="#999999"
+                android:gravity="end" />
+        </LinearLayout>
+
+        <!-- 关于 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#FFFFFF"
+            android:elevation="1dp"
+            android:padding="14dp"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="▎关于"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="#212121" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="音乐悬浮窗 v1.0.0"
+                android:textSize="13sp"
+                android:textColor="#757575"
+                android:paddingTop="4dp" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

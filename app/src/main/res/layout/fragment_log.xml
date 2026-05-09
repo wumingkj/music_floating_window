@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#1E1E1E"
+    android:padding="4dp">
+
+    <TextView
+        android:id="@+id/statusTextView"
+        android:layout_width="match_parent"
+        android:layout_height="28dp"
+        android:text="就绪"
+        android:textSize="12sp"
+        android:textColor="#FFFFFF"
+        android:background="#4CAF50"
+        android:gravity="center" />
+
+    <TextView
+        android:id="@+id/debugLogTextView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:textColor="#00FF00"
+        android:textSize="10sp"
+        android:fontFamily="monospace"
+        android:padding="6dp"
+        android:scrollbars="vertical"
+        android:textIsSelectable="true"
+        android:text="等待初始化...\n" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <Button
+            android:id="@+id/btnCopyLog"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="复制"
+            android:textSize="12sp"
+            android:background="@null"
+            android:textColor="#00E676" />
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:background="#333333" />
+
+        <Button
+            android:id="@+id/btnSaveLog"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="保存"
+            android:textSize="12sp"
+            android:background="@null"
+            android:textColor="#448AFF" />
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:background="#333333" />
+
+        <Button
+            android:id="@+id/btnClearLog"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="清空"
+            android:textSize="12sp"
+            android:background="@null"
+            android:textColor="#FF5252" />
+    </LinearLayout>
+</LinearLayout>
