@@ -88,5 +88,3 @@ lint-results*.html
 
 # Android Profiling
 *.hprof
-
-dart_proj/*

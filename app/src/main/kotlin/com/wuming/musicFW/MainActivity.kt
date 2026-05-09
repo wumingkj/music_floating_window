@@ -77,15 +77,28 @@ class MainActivity : AppCompatActivity() {
         }
         s?.overlayBtn?.setOnClickListener { PermissionManager.openOverlaySettings(this) }
         s?.wallpaperBtn?.setOnClickListener {
-            try {
-                val intent = Intent(Intent.ACTION_SET_WALLPAPER).apply {
-                    component = android.content.ComponentName(
-                        this@MainActivity, com.wuming.musicFW.services.MusicWallpaperService::class.java
-                    )
+            if (MusicWallpaperService.isRunning()) {
+                val intent = Intent(this@MainActivity, MusicWallpaperService::class.java).apply {
+                    action = "STOP"
                 }
-                startActivity(intent)
-            } catch (_: Exception) {
-                startActivity(Intent(Intent.ACTION_SET_WALLPAPER))
+                startService(intent)
+                s.wallpaperBtn.text = "开启屏幕光晕"
+                log("屏幕光晕已关闭")
+            } else {
+                if (!PermissionManager.hasOverlayPermission(this@MainActivity)) {
+                    log("需要悬浮窗权限以显示屏幕光晕")
+                    PermissionManager.openOverlaySettings(this@MainActivity)
+                    return@setOnClickListener
+                }
+                // 请求录音权限以获取真实音频 (拒绝后仍可用模拟节拍)
+                if (!PermissionManager.hasRecordAudioPermission(this@MainActivity)) {
+                    PermissionManager.requestRecordAudioPermission(this@MainActivity)
+                }
+                startForegroundService(Intent(this@MainActivity, MusicWallpaperService::class.java))
+                s.wallpaperBtn.text = "关闭屏幕光晕"
+                val audioNote = if (PermissionManager.hasRecordAudioPermission(this@MainActivity))
+                    "屏幕光晕已开启 (实时音频)" else "屏幕光晕已开启 (模拟节拍, 授权录音可获实时音频)"
+                log(audioNote)
             }
         }
         log("界面已绑定")

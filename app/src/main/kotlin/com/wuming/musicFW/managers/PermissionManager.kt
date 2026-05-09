@@ -59,4 +59,15 @@ object PermissionManager {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
     }
+
+    fun hasRecordAudioPermission(context: Context): Boolean {
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
+    fun requestRecordAudioPermission(activity: Activity) {
+        ActivityCompat.requestPermissions(
+            activity, arrayOf(Manifest.permission.RECORD_AUDIO), 1002
+        )
+    }
 }

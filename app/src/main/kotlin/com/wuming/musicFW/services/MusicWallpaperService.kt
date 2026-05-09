@@ -1,14 +1,23 @@
 package com.wuming.musicFW.services
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
 import android.graphics.*
-import android.service.wallpaper.WallpaperService
+import android.media.audiofx.Visualizer
+import android.os.Build
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
-import android.view.SurfaceHolder
+import android.view.*
+import com.wuming.musicFW.managers.AppSettings
 import kotlin.math.*
 import kotlin.random.Random
 
-class MusicWallpaperService : WallpaperService() {
+class MusicWallpaperService : Service() {
 
     companion object {
         private var instance: MusicWallpaperService? = null
@@ -33,19 +42,30 @@ class MusicWallpaperService : WallpaperService() {
         fun updatePlayingState(playing: Boolean) {
             isPlaying = playing
         }
+
+        private const val CHANNEL_ID = "edge_glow"
     }
 
-    override fun onCreate() {
-        super.onCreate()
-        instance = this
-    }
+    private val handler = Handler(Looper.getMainLooper())
+    private var overlayView: GlowView? = null
+    private lateinit var windowManager: WindowManager
 
-    override fun onDestroy() {
-        instance = null
-        super.onDestroy()
-    }
+    private var frame = 0
+    private var colorHue = 0f
+    private val particles = mutableListOf<Particle>()
+    private val beat = BeatData()
+    private val ripples = mutableListOf<Ripple>()
+    private var drawing = false
 
-    override fun onCreateEngine(): Engine = MusicWallpaperEngine()
+    // ═══ 真实音频分析 ═══
+    private var visualizer: Visualizer? = null
+    private var fftData: ByteArray? = null
+    private var realAudio = false
+    private var prevEnergySmooth = 0f
+
+    // 模拟节拍回退
+    private var beatTimer = 0f
+    private var nextBeatAt = 20f
 
     data class Particle(
         var x: Float, var y: Float,
@@ -54,509 +74,522 @@ class MusicWallpaperService : WallpaperService() {
         var color: Int, var life: Float, var maxLife: Float
     )
 
-    /** 模拟节拍数据 (低频/中频/高频/总能量 0~1) */
     data class BeatData(
         var bass: Float = 0f,
         var mid: Float = 0f,
         var treble: Float = 0f,
         var energy: Float = 0f,
-        var beatPhase: Float = 0f, // 0~1 循环
-        var isBeat: Boolean = false
+        var beatPulse: Float = 0f
     )
 
     data class Ripple(val startTime: Int, val hue: Float, val maxRadius: Float)
 
-    data class EdgeGlow(
-        var x: Float, var y: Float,
-        var intensity: Float,
-        var hue: Float,
-        var baseRadius: Float
-    )
+    // ═══════════════════════════════════════════
+    //  Service 生命周期
+    // ═══════════════════════════════════════════
 
-    inner class MusicWallpaperEngine : Engine() {
-        private val handler = Handler(Looper.getMainLooper())
-        private var drawing = false
-        private val particles = mutableListOf<Particle>()
-        private var frame = 0
-        private var albumRotation = 0f
-        private var colorHue = 0f
-        private var lastBeatFrame = -999
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        createNotificationChannel()
+        startForeground(1, buildNotification())
+        setupVisualizer()
+        showOverlay()
+    }
 
-        // 模糊背景缓存
-        private var blurredBg: Bitmap? = null
-        private var lastArtHash = 0
+    override fun onDestroy() {
+        instance = null
+        drawing = false
+        handler.removeCallbacks(drawRunnable)
+        visualizer?.release()
+        visualizer = null
+        removeOverlay()
+        super.onDestroy()
+    }
 
-        // 节拍数据
-        private val beat = BeatData()
-        // 用于平滑节拍
-        private var beatTimer = 0f
-        private var beatInterval = 30f // 大约 1 秒一拍 (30帧)
-        private var nextBeatAt = 20f
+    override fun onBind(intent: Intent?): IBinder? = null
 
-        // 扩散光环
-        private val ripples = mutableListOf<Ripple>()
-
-        // 边缘光晕点
-        private val edgeGlows = mutableListOf<EdgeGlow>()
-
-        // 边缘均衡器 (四面各一组)
-        private val EQ_BAR_COUNT = 40
-        private val eqTop = FloatArray(EQ_BAR_COUNT)
-        private val eqBottom = FloatArray(EQ_BAR_COUNT)
-        private val eqLeft = FloatArray(EQ_BAR_COUNT)
-        private val eqRight = FloatArray(EQ_BAR_COUNT)
-
-        private val drawRunnable = object : Runnable {
-            override fun run() {
-                if (!drawing) return
-                drawFrame()
-                handler.postDelayed(this, 33) // ~30fps
-            }
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "STOP") {
+            stopSelf()
+            return START_NOT_STICKY
         }
+        return START_STICKY
+    }
 
-        override fun onSurfaceCreated(holder: SurfaceHolder?) {
-            super.onSurfaceCreated(holder)
+    // ═══════════════════════════════════════════
+    //  通知渠道
+    // ═══════════════════════════════════════════
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID, "屏幕光晕", NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "音乐边框光晕效果"
+                setShowBadge(false)
+            }
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun buildNotification(): Notification {
+        val label = if (realAudio) "屏幕光晕 (实时音频)" else "屏幕光晕 (模拟节拍)"
+        val text = if (isPlaying) "正在播放: $songTitle" else "光晕待机中"
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+                .setContentTitle(label)
+                .setContentText(text)
+                .setSmallIcon(android.R.drawable.ic_menu_gallery)
+                .build()
+        } else {
+            Notification.Builder(this)
+                .setContentTitle(label)
+                .setContentText(text)
+                .setSmallIcon(android.R.drawable.ic_menu_gallery)
+                .setPriority(Notification.PRIORITY_LOW)
+                .build()
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    //  真实音频可视化 (Visualizer)
+    // ═══════════════════════════════════════════
+
+    private fun setupVisualizer() {
+        try {
+            val vis = Visualizer(0)
+            val captureSize = Visualizer.getCaptureSizeRange()[1].coerceAtMost(2048)
+            vis.captureSize = captureSize
+            fftData = ByteArray(captureSize)
+
+            vis.setDataCaptureListener(
+                object : Visualizer.OnDataCaptureListener {
+                    override fun onWaveFormDataCapture(
+                        visualizer: Visualizer?, waveform: ByteArray?, samplingRate: Int
+                    ) {}
+
+                    override fun onFftDataCapture(
+                        visualizer: Visualizer?, fft: ByteArray?, samplingRate: Int
+                    ) {
+                        fft?.let { src ->
+                            fftData?.let { dst -> src.copyInto(dst, 0, 0, minOf(src.size, dst.size)) }
+                        }
+                    }
+                },
+                Visualizer.getMaxCaptureRate(),
+                true,
+                true // scope = media
+            )
+            vis.enabled = true
+            visualizer = vis
+            realAudio = true
+        } catch (_: Exception) {
+            realAudio = false
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    //  透明覆盖层管理
+    // ═══════════════════════════════════════════
+
+    @Suppress("DEPRECATION")
+    private fun showOverlay() {
+        val glowView = GlowView(this)
+        overlayView = glowView
+
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else
+            WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                or WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON,
+            PixelFormat.TRANSLUCENT
+        )
+        params.gravity = Gravity.TOP or Gravity.START
+        windowManager.addView(glowView, params)
+
+        glowView.post {
+            initParticles(glowView.width.toFloat(), glowView.height.toFloat())
             drawing = true
-            initParticles()
-            initEdgeGlows()
             handler.post(drawRunnable)
         }
+    }
 
-        override fun onSurfaceDestroyed(holder: SurfaceHolder?) {
-            super.onSurfaceDestroyed(holder)
-            drawing = false
-            handler.removeCallbacks(drawRunnable)
-        }
+    private fun removeOverlay() {
+        try { overlayView?.let { windowManager.removeView(it) } } catch (_: Exception) {}
+        overlayView = null
+    }
 
-        override fun onVisibilityChanged(visible: Boolean) {
-            super.onVisibilityChanged(visible)
-            if (visible && !drawing) {
-                drawing = true
-                handler.post(drawRunnable)
-            } else if (!visible) {
-                drawing = false
-                handler.removeCallbacks(drawRunnable)
+    // ═══════════════════════════════════════════
+    //  动画循环
+    // ═══════════════════════════════════════════
+
+    private val drawRunnable = object : Runnable {
+        override fun run() {
+            if (!drawing) return
+            frame++
+            colorHue = (colorHue + AppSettings.glowHueSpeed * 0.005f) % 360f
+            updateBeat()
+            val view = overlayView ?: return
+            val w = view.width.toFloat()
+            val h = view.height.toFloat()
+            if (w <= 0f || h <= 0f) {
+                handler.postDelayed(this, 100)
+                return
             }
+            updateParticles(w, h)
+            view.invalidate()
+            handler.postDelayed(this, 33) // ~30fps
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    //  粒子系统 (精简)
+    // ═══════════════════════════════════════════
+
+    private fun initParticles(w: Float, h: Float) {
+        particles.clear()
+        val count = AppSettings.glowParticles
+        val initCount = (count * 0.8f).toInt().coerceAtLeast(5)
+        for (i in 0 until initCount) {
+            particles.add(Particle(
+                x = Random.nextFloat() * w,
+                y = Random.nextFloat() * h,
+                vx = (Random.nextFloat() - 0.5f) * 0.3f,
+                vy = -Random.nextFloat() * 0.4f - 0.05f,
+                radius = Random.nextFloat() * 2f + 0.3f,
+                alpha = Random.nextFloat() * 0.15f + 0.02f,
+                color = Color.HSVToColor(255, arrayOf(Random.nextFloat() * 360f, 0.5f, 0.9f).toFloatArray()),
+                life = Random.nextFloat() * 200f,
+                maxLife = Random.nextFloat() * 200f + 100f
+            ))
+        }
+    }
+
+    private fun updateParticles(w: Float, h: Float) {
+        for (p in particles) {
+            p.life++
+            if (p.life > p.maxLife || p.y < -50f || p.x < -50f || p.x > w + 50f) {
+                p.x = Random.nextFloat() * w
+                p.y = h + Random.nextFloat() * 100f
+                p.life = 0f
+                p.maxLife = Random.nextFloat() * 200f + 100f
+                p.radius = Random.nextFloat() * 2f + 0.3f
+                p.color = Color.HSVToColor(255, arrayOf(Random.nextFloat() * 360f, 0.5f, 0.9f).toFloatArray())
+            }
+            val speedMult = if (isPlaying) 1f + beat.energy * 0.5f else 0.2f
+            p.x += p.vx * speedMult + sin(p.life * 0.02f) * 0.15f
+            p.y += p.vy * speedMult
+            val lifeRatio = p.life / p.maxLife
+            p.alpha = when {
+                lifeRatio < 0.1f -> lifeRatio / 0.1f
+                lifeRatio > 0.8f -> (1f - lifeRatio) / 0.2f
+                else -> 1f
+            } * (if (isPlaying) 0.15f else 0.03f)
         }
 
-        private fun initParticles() {
-            particles.clear()
-            for (i in 0 until 80) {
+        // beat时从四边喷射粒子
+        val particleCount = AppSettings.glowParticles
+        if (isPlaying && beat.beatPulse > 0.5f && particleCount > 10) {
+            val burstCount = max(1, (particleCount * 0.05f).toInt())
+            for (k in 0 until burstCount) {
+                val side = Random.nextInt(4)
+                val px = when (side) { 0 -> Random.nextFloat() * w; 1 -> w; 2 -> Random.nextFloat() * w; else -> 0f }
+                val py = when (side) { 0 -> 0f; 1 -> Random.nextFloat() * h; 2 -> h; else -> Random.nextFloat() * h }
+                val angle = when (side) {
+                    0 -> Random.nextFloat() * PI.toFloat()
+                    1 -> (PI.toFloat() / 2 + Random.nextFloat() * PI.toFloat())
+                    2 -> Random.nextFloat() * PI.toFloat() + PI.toFloat()
+                    else -> (-PI.toFloat() / 2 + Random.nextFloat() * PI.toFloat())
+                }
+                val spd = Random.nextFloat() * 2f + 0.8f
                 particles.add(Particle(
-                    x = Random.nextFloat() * 1080f,
-                    y = Random.nextFloat() * 2400f,
-                    vx = (Random.nextFloat() - 0.5f) * 0.6f,
-                    vy = -Random.nextFloat() * 0.8f - 0.2f,
-                    radius = Random.nextFloat() * 4f + 1f,
-                    alpha = Random.nextFloat() * 0.3f + 0.05f,
-                    color = Color.HSVToColor(255, arrayOf(Random.nextFloat() * 360f, 0.6f, 0.9f).toFloatArray()),
-                    life = Random.nextFloat() * 200f,
-                    maxLife = Random.nextFloat() * 200f + 100f
+                    x = px, y = py,
+                    vx = cos(angle) * spd, vy = sin(angle) * spd,
+                    radius = Random.nextFloat() * 2.5f + 0.8f,
+                    alpha = 0.5f,
+                    color = Color.HSVToColor(255, arrayOf(colorHue + Random.nextFloat() * 60f, 0.8f, 1f).toFloatArray()),
+                    life = 0f, maxLife = Random.nextFloat() * 40f + 20f
                 ))
             }
         }
-
-        private fun initEdgeGlows() {
-            edgeGlows.clear()
-            // 8 个边缘发光点
-            for (i in 0 until 8) {
-                val hue = i * 45f
-                edgeGlows.add(EdgeGlow(0f, 0f, 0f, hue, 80f))
-            }
+        if (particles.size > particleCount * 2) {
+            particles.subList(0, particles.size - particleCount * 2).clear()
         }
+    }
 
-        /** 模拟音乐节拍 - 基于播放状态生成伪随机节拍 */
-        private fun updateBeat() {
-            if (isPlaying) {
-                beatTimer++
-                // 变化节拍间隔, 模拟音乐节奏
-                if (beatTimer >= nextBeatAt) {
-                    beatTimer = 0f
-                    nextBeatAt = Random.nextFloat() * 15f + 18f // 18~33帧一拍
-                    val intensity = Random.nextFloat() * 0.4f + 0.6f
-                    beat.bass = intensity * Random.nextFloat()
-                    beat.mid = intensity * Random.nextFloat() * 0.8f
-                    beat.treble = intensity * Random.nextFloat() * 0.6f
-                    beat.energy = (beat.bass + beat.mid + beat.treble) / 3f
-                    beat.isBeat = beat.energy > 0.5f
-                    if (beat.isBeat) {
-                        lastBeatFrame = frame
-                        ripples.add(Ripple(frame, colorHue, min(1080f, 2400f) * 0.8f))
-                    }
-                }
+    // ═══════════════════════════════════════════
+    //  音频节拍引擎
+    // ═══════════════════════════════════════════
+
+    private fun updateBeat() {
+        beat.beatPulse *= 0.85f
+
+        if (isPlaying) {
+            if (realAudio && fftData != null) {
+                updateBeatFromAudio()
             } else {
-                // 衰减
-                beat.bass *= 0.92f
-                beat.mid *= 0.92f
-                beat.treble *= 0.92f
-                beat.energy *= 0.92f
-                beat.isBeat = false
+                updateBeatSimulated()
             }
-            beat.beatPhase = (beat.beatPhase + 0.05f) % 1f
-
-            // 限制扩散光环数量
-            if (ripples.size > 8) {
-                ripples.subList(0, ripples.size - 8).clear()
-            }
+        } else {
+            beat.bass *= 0.9f
+            beat.mid *= 0.9f
+            beat.treble *= 0.9f
+            beat.energy *= 0.9f
         }
 
-        /** 更新边缘光晕位置 - 沿屏幕边缘均匀分布 */
-        private fun updateEdgeGlows(w: Float, h: Float) {
-            val perimeter = 2f * (w + h)
-            for (i in edgeGlows.indices) {
-                val g = edgeGlows[i]
-                // 沿边缘移动
-                val offset = frame * 0.3f + i * perimeter / edgeGlows.size
-                val pos = (offset % perimeter + perimeter) % perimeter
-                when {
-                    pos < w -> { g.x = pos; g.y = 0f }  // 上边
-                    pos < w + h -> { g.x = w; g.y = pos - w }  // 右边
-                    pos < 2 * w + h -> { g.x = 2 * w + h - pos; g.y = h }  // 下边
-                    else -> { g.x = 0f; g.y = perimeter - pos }  // 左边
-                }
-                // 节拍驱动强度
-                val target = if (isPlaying) 0.4f + beat.energy * 0.6f else 0.05f + sin(frame * 0.01f + i) * 0.05f
-                g.intensity += (target - g.intensity) * 0.1f
-                g.hue = (colorHue + i * 40f) % 360f
-                g.baseRadius = 60f + beat.bass * 120f
-            }
+        if (ripples.size > 3) {
+            ripples.subList(0, ripples.size - 3).clear()
+        }
+    }
+
+    /** 从 Visualizer FFT 数据分析真实音频 */
+    private fun updateBeatFromAudio() {
+        val fft = fftData ?: return
+        val numBins = fft.size / 2
+        if (numBins < 4) return
+
+        // 频段划分: bass 0~5%, mid 5~25%, treble 25%~
+        val bassEnd = max(2, (numBins * 0.05f).toInt())
+        val midEnd = max(bassEnd + 1, (numBins * 0.25f).toInt())
+
+        var bassSum = 0f
+        var midSum = 0f
+        var trebleSum = 0f
+
+        for (i in 1 until bassEnd) {
+            val mag = fftMagnitude(fft, i)
+            bassSum += mag
+        }
+        for (i in bassEnd until midEnd) {
+            val mag = fftMagnitude(fft, i)
+            midSum += mag
+        }
+        for (i in midEnd until numBins) {
+            val mag = fftMagnitude(fft, i)
+            trebleSum += mag
         }
 
-        /** 更新边缘均衡器 */
-        private fun updateEqualizer() {
-            val decay = 0.85f
-            val arrays = arrayOf(eqTop, eqBottom, eqLeft, eqRight)
-            for (arr in arrays) {
-                for (i in arr.indices) {
-                    arr[i] *= decay
-                }
-            }
-            if (isPlaying && beat.isBeat) {
-                // 随机激活几根柱子
-                for (arr in arrays) {
-                    val count = Random.nextInt(3, 8)
-                    for (j in 0 until count) {
-                        val idx = Random.nextInt(arr.size)
-                        arr[idx] = Random.nextFloat() * beat.energy * 1.5f
-                    }
-                }
+        // 归一化到 0~1 (灵敏度系数由设置控制)
+        val sens = AppSettings.glowBeatSens * 0.03f // 50 -> 1.5x
+        beat.bass = (bassSum / max(1, bassEnd - 1) * sens).coerceIn(0f, 1f)
+        beat.mid = (midSum / max(1, midEnd - bassEnd) * sens * 1.3f).coerceIn(0f, 1f)
+        beat.treble = (trebleSum / max(1, numBins - midEnd) * sens * 1.6f).coerceIn(0f, 1f)
+        beat.energy = beat.bass * 0.5f + beat.mid * 0.3f + beat.treble * 0.2f
+
+        // Beat 检测: 灵敏度越高阈值越低
+        val threshold = 1.5f - AppSettings.glowBeatSens * 0.01f // 50->1.0, 100->0.5
+        prevEnergySmooth = prevEnergySmooth * 0.92f + beat.bass * 0.08f
+        if (beat.bass > prevEnergySmooth * threshold && beat.bass > 0.1f) {
+            beat.beatPulse = beat.bass.coerceAtMost(1f)
+            val view = overlayView ?: return
+            val maxDim = min(view.width, view.height).toFloat()
+            ripples.add(Ripple(frame, colorHue, maxDim * 0.5f))
+        }
+    }
+
+    /** FFT bin 幅度计算 */
+    private fun fftMagnitude(fft: ByteArray, bin: Int): Float {
+        val idx = bin * 2
+        if (idx + 1 >= fft.size) return 0f
+        val re = fft[idx].toInt() / 128f
+        val im = fft[idx + 1].toInt() / 128f
+        return sqrt(re * re + im * im)
+    }
+
+    /** 模拟节拍 (Visualizer 不可用时的降级方案) */
+    private fun updateBeatSimulated() {
+        beatTimer++
+        if (beatTimer >= nextBeatAt) {
+            beatTimer = 0f
+            nextBeatAt = Random.nextFloat() * 12f + 18f // 18~30帧 (比之前慢)
+            val intensity = Random.nextFloat() * 0.2f + 0.4f // 比之前低
+            beat.bass = intensity * (Random.nextFloat() * 0.4f + 0.3f)
+            beat.mid = intensity * (Random.nextFloat() * 0.3f + 0.15f)
+            beat.treble = intensity * (Random.nextFloat() * 0.2f + 0.1f)
+            beat.energy = beat.bass * 0.5f + beat.mid * 0.3f + beat.treble * 0.2f
+
+            if (beat.energy > 0.3f) {
+                beat.beatPulse = beat.energy
+                val view = overlayView ?: return
+                val maxDim = min(view.width, view.height).toFloat()
+                ripples.add(Ripple(frame, colorHue, maxDim * 0.4f))
             }
         }
+    }
 
-        private fun updateParticles(w: Float, h: Float) {
-            for (p in particles) {
-                p.life++
-                if (p.life > p.maxLife || p.y < -50f || p.x < -50f || p.x > w + 50f) {
-                    p.x = Random.nextFloat() * w
-                    p.y = h + Random.nextFloat() * 100f
-                    p.life = 0f
-                    p.maxLife = Random.nextFloat() * 200f + 100f
-                    p.radius = Random.nextFloat() * 4f + 1f
-                    p.color = Color.HSVToColor(255, arrayOf(Random.nextFloat() * 360f, 0.6f, 0.9f).toFloatArray())
-                }
-                val speedMult = if (isPlaying) 1.5f + beat.energy else 0.4f
-                p.x += p.vx * speedMult + sin(p.life * 0.02f) * 0.3f
-                p.y += p.vy * speedMult
-                val lifeRatio = p.life / p.maxLife
-                p.alpha = when {
-                    lifeRatio < 0.1f -> lifeRatio / 0.1f
-                    lifeRatio > 0.8f -> (1f - lifeRatio) / 0.2f
-                    else -> 1f
-                } * (if (isPlaying) 0.35f else 0.1f)
-            }
-            // 播放时从边缘喷射粒子
-            if (isPlaying && beat.isBeat && frame % 2 == 0) {
-                for (k in 0 until 3) {
-                    val side = Random.nextInt(4)
-                    val px = when (side) { 0 -> Random.nextFloat() * w; 1 -> w; 2 -> Random.nextFloat() * w; else -> 0f }
-                    val py = when (side) { 0 -> 0f; 1 -> Random.nextFloat() * h; 2 -> h; else -> Random.nextFloat() * h }
-                    val angle = when (side) {
-                        0 -> Random.nextFloat() * PI.toFloat() // 向下
-                        1 -> (PI.toFloat() / 2 + Random.nextFloat() * PI.toFloat()) // 向左
-                        2 -> Random.nextFloat() * PI.toFloat() + PI.toFloat() // 向上
-                        else -> (-PI.toFloat() / 2 + Random.nextFloat() * PI.toFloat()) // 向右
-                    }
-                    val spd = Random.nextFloat() * 3f + 1f
-                    particles.add(Particle(
-                        x = px, y = py,
-                        vx = cos(angle) * spd, vy = sin(angle) * spd,
-                        radius = Random.nextFloat() * 3f + 1f,
-                        alpha = 0.6f,
-                        color = Color.HSVToColor(255, arrayOf(colorHue + Random.nextFloat() * 80f, 0.9f, 1f).toFloatArray()),
-                        life = 0f, maxLife = Random.nextFloat() * 60f + 30f
-                    ))
-                }
-            }
-            if (particles.size > 200) {
-                particles.subList(0, particles.size - 200).clear()
-            }
+    // ═══════════════════════════════════════════
+    //  渲染: 边缘光晕 (克制版)
+    // ═══════════════════════════════════════════
+
+    private fun drawEdgeGlow(canvas: Canvas, w: Float, h: Float) {
+        // 亮度倍率: intensity 0~100 -> 0.3~2.0
+        val intMul = AppSettings.glowIntensity * 0.017f + 0.3f
+        // 呼吸基础亮度
+        val baseBreath = sin(frame * 0.015f) * 0.06f + 0.12f
+        val pulse = beat.beatPulse
+        val playBoost = if (isPlaying) 0.15f else 0f
+
+        val brightness = min(1f, (baseBreath + playBoost + pulse) * intMul)
+        if (brightness < 0.02f) return
+
+        // 扩散深度: spread 0~100 -> 20~200px 基础
+        val spreadBase = AppSettings.glowSpread * 1.8f + 20f
+        val edgeDepth = spreadBase + pulse * spreadBase * 0.8f + (if (isPlaying) 15f else 0f)
+
+        val hue1 = colorHue % 360
+        val hue2 = (colorHue + 120f) % 360
+        val hue3 = (colorHue + 240f) % 360
+
+        val a1 = (brightness * 120).toInt().coerceIn(0, 255)
+        val a2 = ((brightness * 0.5f) * 120).toInt().coerceIn(0, 255)
+        if (a1 <= 2) return
+
+        // ── 扫光 (单道) ──
+        val sweepSpeed = if (isPlaying) 2.5f else 1f
+        val perimeter = 2f * (w + h)
+        val sweepPos = (frame * sweepSpeed) % perimeter
+        var sweepX: Float; var sweepY: Float
+        when {
+            sweepPos < w -> { sweepX = sweepPos; sweepY = 0f }
+            sweepPos < w + h -> { sweepX = w; sweepY = sweepPos - w }
+            sweepPos < 2 * w + h -> { sweepX = 2 * w + h - sweepPos; sweepY = h }
+            else -> { sweepX = 0f; sweepY = perimeter - sweepPos }
+        }
+        val sweepRadius = spreadBase * 1.5f + pulse * spreadBase * 0.5f
+        val sweepAlpha = (brightness * 140).toInt().coerceIn(0, 255)
+        if (sweepAlpha > 2) {
+            val sweepColor = Color.HSVToColor(sweepAlpha, arrayOf(hue1, 0.7f, 1f).toFloatArray())
+            canvas.saveLayer(null, null)
+            canvas.clipRect(
+                max(0f, sweepX - sweepRadius), max(0f, sweepY - sweepRadius),
+                min(w, sweepX + sweepRadius), min(h, sweepY + sweepRadius)
+            )
+            canvas.drawRect(0f, 0f, w, h, Paint().apply {
+                shader = RadialGradient(sweepX, sweepY, sweepRadius, intArrayOf(sweepColor, Color.TRANSPARENT), null, Shader.TileMode.CLAMP)
+            })
+            canvas.restore()
         }
 
-        private fun buildBlurredBg(art: Bitmap?, w: Int, h: Int) {
-            val src = art ?: return
-            val hash = src.generationId
-            if (hash == lastArtHash && blurredBg != null) return
-            lastArtHash = hash
-            try {
-                val scaled = Bitmap.createScaledBitmap(src, w / 8, h / 8, true)
-                blurredBg = Bitmap.createScaledBitmap(scaled, w, h, true)
-                if (blurredBg != null) {
-                    val cv = Canvas(blurredBg!!)
-                    cv.drawColor(Color.argb(160, 0, 0, 0))
-                }
-                if (scaled != blurredBg) scaled.recycle()
-            } catch (_: Exception) {}
-        }
+        // ── 四边光晕带 ──
+        val topColor = Color.HSVToColor(a1, arrayOf(hue1, 0.6f, 1f).toFloatArray())
+        val botColor = Color.HSVToColor(a1, arrayOf(hue2, 0.6f, 1f).toFloatArray())
+        val leftColor = Color.HSVToColor(a2, arrayOf(hue3, 0.6f, 1f).toFloatArray())
+        val rightColor = Color.HSVToColor(a2, arrayOf(hue1, 0.6f, 1f).toFloatArray())
 
-        private fun drawFrame() {
-            frame++
-            colorHue = (colorHue + 0.3f) % 360f
-            if (isPlaying) albumRotation += 0.3f
+        canvas.drawRect(0f, 0f, w, edgeDepth, Paint().apply {
+            shader = LinearGradient(0f, 0f, 0f, edgeDepth, topColor, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        })
+        canvas.drawRect(0f, h - edgeDepth, w, h, Paint().apply {
+            shader = LinearGradient(0f, h, 0f, h - edgeDepth, botColor, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        })
+        canvas.drawRect(0f, 0f, edgeDepth, h, Paint().apply {
+            shader = LinearGradient(0f, 0f, edgeDepth, 0f, leftColor, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        })
+        canvas.drawRect(w - edgeDepth, 0f, w, h, Paint().apply {
+            shader = LinearGradient(w, 0f, w - edgeDepth, 0f, rightColor, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        })
 
-            updateBeat()
-            updateEqualizer()
-
-            val holder = surfaceHolder ?: return
-            val canvas: Canvas? = try { holder.lockCanvas() } catch (_: Exception) { return }
-            if (canvas == null) return
-
-            val w = canvas.width.toFloat()
-            val h = canvas.height.toFloat()
-
-            // ═══════ 1) 背景 ═══════
-            buildBlurredBg(albumArt, w.toInt(), h.toInt())
-            if (blurredBg != null) {
-                canvas.drawBitmap(blurredBg!!, 0f, 0f, null)
-            } else {
-                val bgPaint = Paint()
-                val shader = LinearGradient(0f, 0f, w, h,
-                    intArrayOf(0xFF1a1a2e.toInt(), 0xFF16213e.toInt(), 0xFF0f3460.toInt(), 0xFF533483.toInt()),
-                    null, Shader.TileMode.CLAMP)
-                bgPaint.shader = shader
-                canvas.drawRect(0f, 0f, w, h, bgPaint)
-            }
-
-            // ═══════ 2) 边缘光晕 (大范围柔光) ═══════
-            updateEdgeGlows(w, h)
-            for (g in edgeGlows) {
-                val glowRadius = g.baseRadius + beat.energy * 80f
-                val glowColor = Color.HSVToColor(
-                    (g.intensity * 80).toInt(),
-                    arrayOf(g.hue, 0.7f, 1f).toFloatArray()
+        // ── 四角光点 ──
+        val cornerRadius = spreadBase * 0.8f + pulse * spreadBase * 0.4f
+        val cornerAlpha = (brightness * 100).toInt().coerceIn(0, 255)
+        if (cornerAlpha > 2) {
+            val corners = listOf(
+                Triple(0f, 0f, hue1),
+                Triple(w, 0f, hue2),
+                Triple(w, h, hue3),
+                Triple(0f, h, hue1)
+            )
+            for ((cx2, cy2, hue) in corners) {
+                val cc = Color.HSVToColor(cornerAlpha, arrayOf(hue, 0.5f, 1f).toFloatArray())
+                canvas.saveLayer(null, null)
+                canvas.clipRect(
+                    max(0f, cx2 - cornerRadius), max(0f, cy2 - cornerRadius),
+                    min(w, cx2 + cornerRadius), min(h, cy2 + cornerRadius)
                 )
-                val glow = RadialGradient(g.x, g.y, glowRadius, glowColor, Color.TRANSPARENT, Shader.TileMode.CLAMP)
-                canvas.drawPaint(Paint().apply { shader = glow })
+                canvas.drawRect(0f, 0f, w, h, Paint().apply {
+                    shader = RadialGradient(cx2, cy2, cornerRadius, intArrayOf(cc, Color.TRANSPARENT), null, Shader.TileMode.CLAMP)
+                })
+                canvas.restore()
             }
+        }
 
-            // ═══════ 3) 边缘全屏色彩脉冲 (播放时) ═══════
-            if (isPlaying) {
-                val pulseAlpha = (beat.energy * 40).toInt()
-                if (pulseAlpha > 0) {
-                    // 四边渐变发光
-                    val edgeW = 60f + beat.bass * 100f
-                    val pulseColor = Color.HSVToColor(pulseAlpha, arrayOf(colorHue, 0.8f, 1f).toFloatArray())
-                    val pulseColor2 = Color.HSVToColor(pulseAlpha, arrayOf((colorHue + 120) % 360, 0.8f, 1f).toFloatArray())
-                    val pulseColor3 = Color.HSVToColor(pulseAlpha, arrayOf((colorHue + 240) % 360, 0.8f, 1f).toFloatArray())
+        // ── beat时边线 ──
+        if (pulse > 0.3f) {
+            val flashW = 1.5f + pulse * 3f
+            val flashAlpha = (pulse * 180).toInt().coerceIn(0, 255)
+            val flashColor = Color.HSVToColor(flashAlpha, arrayOf(hue1, 0.5f, 1f).toFloatArray())
+            val fp = Paint().apply { color = flashColor }
+            canvas.drawRect(0f, 0f, w, flashW, fp)
+            canvas.drawRect(0f, h - flashW, w, h, fp)
+            canvas.drawRect(0f, 0f, flashW, h, fp)
+            canvas.drawRect(w - flashW, 0f, w, h, fp)
+        }
+    }
 
-                    // 上边
-                    val topGrad = LinearGradient(0f, 0f, 0f, edgeW, pulseColor, Color.TRANSPARENT, Shader.TileMode.CLAMP)
-                    canvas.drawRect(0f, 0f, w, edgeW, Paint().apply { shader = topGrad })
-                    // 下边
-                    val botGrad = LinearGradient(0f, h, 0f, h - edgeW, pulseColor2, Color.TRANSPARENT, Shader.TileMode.CLAMP)
-                    canvas.drawRect(0f, h - edgeW, w, h, Paint().apply { shader = botGrad })
-                    // 左边
-                    val leftGrad = LinearGradient(0f, 0f, edgeW, 0f, pulseColor3, Color.TRANSPARENT, Shader.TileMode.CLAMP)
-                    canvas.drawRect(0f, 0f, edgeW, h, Paint().apply { shader = leftGrad })
-                    // 右边
-                    val rightGrad = LinearGradient(w, 0f, w - edgeW, 0f, Color.HSVToColor(pulseAlpha, arrayOf((colorHue + 60) % 360, 0.8f, 1f).toFloatArray()), Color.TRANSPARENT, Shader.TileMode.CLAMP)
-                    canvas.drawRect(w - edgeW, 0f, w, h, Paint().apply { shader = rightGrad })
-                }
-            }
+    // ═══════════════════════════════════════════
+    //  自定义渲染视图
+    // ═══════════════════════════════════════════
 
-            // ═══════ 4) 扩散光环 (beat时从中心扩散) ═══════
+    private inner class GlowView(context: Context) : View(context) {
+        init {
+            setWillNotDraw(false)
+            setLayerType(LAYER_TYPE_SOFTWARE, null)
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            if (!drawing) return
+            super.onDraw(canvas)
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (w <= 0f || h <= 0f) return
+
+            // ═══ 1) 边缘光晕 ═══
+            drawEdgeGlow(canvas, w, h)
+
+            // ═══ 2) 扩散光环 (减弱) ═══
             val cx = w / 2f
-            val cy = h / 2f - 40f
+            val cy = h / 2f
             val iter = ripples.iterator()
             while (iter.hasNext()) {
                 val rip = iter.next()
                 val elapsed = frame - rip.startTime
-                val duration = 60f // 约2秒扩散完
+                val duration = 60f // 更慢扩散
                 if (elapsed > duration) { iter.remove(); continue }
                 val progress = elapsed / duration
                 val radius = progress * rip.maxRadius
-                val alpha = (1f - progress) * 0.4f
+                val alpha = (1f - progress)
                 val ringColor = Color.HSVToColor(
-                    (alpha * 255).toInt(),
-                    arrayOf((rip.hue + progress * 60f) % 360, 0.7f, 1f).toFloatArray()
+                    (alpha * 80).toInt(), // 降低光环透明度
+                    arrayOf((rip.hue + progress * 60f) % 360, 0.5f, 1f).toFloatArray()
                 )
                 canvas.drawCircle(cx, cy, radius, Paint().apply {
                     style = Paint.Style.STROKE
-                    strokeWidth = 2f + (1f - progress) * 4f
+                    strokeWidth = 1.5f + (1f - progress) * 2f
                     color = ringColor
                 })
             }
 
-            // ═══════ 5) 边缘均衡器柱 ═══════
-            drawEdgeEqualizer(canvas, w, h)
-
-            // ═══════ 6) 粒子 ═══════
-            updateParticles(w, h)
+            // ═══ 3) 粒子 ═══
             for (p in particles) {
                 val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = p.color
-                    setShadowLayer(p.radius * 3f, 0f, 0f, p.color)
+                    setShadowLayer(p.radius * 1.5f, 0f, 0f, p.color)
                     this.alpha = (p.alpha * 255).toInt()
                 }
                 canvas.drawCircle(p.x, p.y, p.radius, paint)
-            }
-
-            // ═══════ 7) 中心专辑封面 + 光圈 ═══════
-            val artRadius = min(w, h) * 0.15f
-
-            // 外层脉动光圈
-            val pulseSize = 1f + beat.bass * 0.15f
-            val auraPaint = Paint().apply {
-                color = Color.HSVToColor(
-                    (60 + beat.energy * 80).toInt(),
-                    arrayOf(colorHue, 0.5f, 1f).toFloatArray()
-                )
-                maskFilter = BlurMaskFilter(artRadius * 0.6f * pulseSize, BlurMaskFilter.Blur.NORMAL)
-            }
-            canvas.drawCircle(cx, cy, artRadius * 1.2f * pulseSize, auraPaint)
-
-            canvas.save()
-            canvas.rotate(albumRotation, cx, cy)
-
-            // 外圈光环
-            val ringPaint = Paint().apply {
-                style = Paint.Style.STROKE
-                strokeWidth = 2f + beat.energy * 2f
-                color = Color.HSVToColor(180, arrayOf(colorHue, 0.7f, 1f).toFloatArray())
-                maskFilter = BlurMaskFilter(6f, BlurMaskFilter.Blur.NORMAL)
-            }
-            canvas.drawCircle(cx, cy, artRadius + 8f, ringPaint)
-
-            // 唱片底色
-            canvas.drawCircle(cx, cy, artRadius, Paint().apply { color = Color.argb(200, 25, 25, 25) })
-
-            // 唱片纹理
-            val linePaint = Paint().apply {
-                style = Paint.Style.STROKE
-                strokeWidth = 0.5f
-                color = Color.argb(30, 255, 255, 255)
-            }
-            for (r in (artRadius * 0.3f).toInt()..(artRadius * 0.95f).toInt() step 5) {
-                canvas.drawCircle(cx, cy, r.toFloat(), linePaint)
-            }
-
-            // 中心孔
-            canvas.drawCircle(cx, cy, artRadius * 0.12f, Paint().apply { color = Color.argb(220, 15, 15, 15) })
-
-            // 专辑图
-            albumArt?.let { art ->
-                val artSize = (artRadius * 0.85f).toInt()
-                if (artSize > 0) {
-                    val scaled = Bitmap.createScaledBitmap(art, artSize, artSize, true)
-                    val clipPath = Path().apply { addCircle(cx, cy, artRadius * 0.42f, Path.Direction.CW) }
-                    canvas.save()
-                    canvas.clipPath(clipPath)
-                    canvas.drawBitmap(scaled, cx - artSize / 2f, cy - artSize / 2f, null)
-                    canvas.restore()
-                    if (scaled != art) scaled.recycle()
-                }
-            }
-            canvas.restore()
-
-            // ═══════ 8) 歌曲信息 ═══════
-            val textY = cy + artRadius + 45f
-            val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.WHITE
-                textSize = min(w, h) * 0.04f
-                textAlign = Paint.Align.CENTER
-                isFakeBoldText = true
-                setShadowLayer(6f, 0f, 0f, Color.BLACK)
-            }
-            if (songTitle.isNotEmpty()) {
-                canvas.drawText(songTitle, cx, textY, titlePaint)
-            }
-            val artistPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.argb(180, 255, 255, 255)
-                textSize = min(w, h) * 0.025f
-                textAlign = Paint.Align.CENTER
-                setShadowLayer(4f, 0f, 0f, Color.BLACK)
-            }
-            if (songArtist.isNotEmpty()) {
-                canvas.drawText(songArtist, cx, textY + min(w, h) * 0.055f, artistPaint)
-            }
-            if (currentLyric.isNotEmpty()) {
-                val lyricPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.HSVToColor(230, arrayOf(colorHue, 0.5f, 1f).toFloatArray())
-                    textSize = min(w, h) * 0.03f
-                    textAlign = Paint.Align.CENTER
-                    setShadowLayer(5f, 0f, 0f, Color.BLACK)
-                }
-                canvas.drawText(currentLyric, cx, textY + min(w, h) * 0.12f, lyricPaint)
-            }
-
-            // ═══════ 9) 暗角 (最后叠加) ═══════
-            val vignette = RadialGradient(cx, h / 2, min(w, h) * 0.5f, Color.TRANSPARENT, Color.argb(120, 0, 0, 0), Shader.TileMode.CLAMP)
-            canvas.drawRect(0f, 0f, w, h, Paint().apply { shader = vignette })
-
-            try { holder.unlockCanvasAndPost(canvas) } catch (_: Exception) {}
-        }
-
-        /** 绘制屏幕四边的均衡器柱 */
-        private fun drawEdgeEqualizer(canvas: Canvas, w: Float, h: Float) {
-            val barThickness = 3f
-            val maxBarLen = min(w, h) * 0.12f
-            val n = EQ_BAR_COUNT
-
-            val hue1 = colorHue
-            val hue2 = (colorHue + 120f) % 360
-
-            // 上边 (向上生长)
-            for (i in 0 until n) {
-                val x = w / (n + 1) * (i + 1)
-                val barH = eqTop[i] * maxBarLen
-                if (barH < 1f) continue
-                val hue = (hue1 + i * 3f) % 360
-                canvas.drawRoundRect(x - barThickness, 0f, x + barThickness, barH, 1.5f, 1.5f, Paint().apply {
-                    color = Color.HSVToColor(200, arrayOf(hue, 0.8f, 1f).toFloatArray())
-                    maskFilter = BlurMaskFilter(4f, BlurMaskFilter.Blur.NORMAL)
-                })
-            }
-            // 下边 (向下生长)
-            for (i in 0 until n) {
-                val x = w / (n + 1) * (i + 1)
-                val barH = eqBottom[i] * maxBarLen
-                if (barH < 1f) continue
-                val hue = (hue2 + i * 3f) % 360
-                canvas.drawRoundRect(x - barThickness, h, x + barThickness, h - barH, 1.5f, 1.5f, Paint().apply {
-                    color = Color.HSVToColor(200, arrayOf(hue, 0.8f, 1f).toFloatArray())
-                    maskFilter = BlurMaskFilter(4f, BlurMaskFilter.Blur.NORMAL)
-                })
-            }
-            // 左边 (向左生长)
-            for (i in 0 until n) {
-                val y = h / (n + 1) * (i + 1)
-                val barW = eqLeft[i] * maxBarLen
-                if (barW < 1f) continue
-                val hue = (hue2 + i * 3f) % 360
-                canvas.drawRoundRect(0f, y - barThickness, barW, y + barThickness, 1.5f, 1.5f, Paint().apply {
-                    color = Color.HSVToColor(200, arrayOf(hue, 0.8f, 1f).toFloatArray())
-                    maskFilter = BlurMaskFilter(4f, BlurMaskFilter.Blur.NORMAL)
-                })
-            }
-            // 右边 (向右生长)
-            for (i in 0 until n) {
-                val y = h / (n + 1) * (i + 1)
-                val barW = eqRight[i] * maxBarLen
-                if (barW < 1f) continue
-                val hue = (hue1 + i * 3f) % 360
-                canvas.drawRoundRect(w, y - barThickness, w - barW, y + barThickness, 1.5f, 1.5f, Paint().apply {
-                    color = Color.HSVToColor(200, arrayOf(hue, 0.8f, 1f).toFloatArray())
-                    maskFilter = BlurMaskFilter(4f, BlurMaskFilter.Blur.NORMAL)
-                })
             }
         }
     }
