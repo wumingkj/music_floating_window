@@ -57,21 +57,6 @@ class MediaNotificationService : NotificationListenerService() {
                 LogHelper.e("triggerScan 失败: ${e.message}")
             }
         }
-
-        /** 获取当前音乐 App 的音频 session ID（用于 Visualizer），失败返回 -1 */
-        fun getAudioSessionId(): Int {
-            val inst = _instance ?: return -1
-            val ctrl = inst.currentController ?: return -1
-            return try {
-                val info = ctrl.playbackInfo ?: return -1
-                val f = info.javaClass.getDeclaredField("mAudioSessionId")
-                f.isAccessible = true
-                f.getInt(info)
-            } catch (e: Exception) {
-                LogHelper.e("获取音频 session ID 失败: ${e.message}")
-                -1
-            }
-        }
     }
 
     private var currentController: MediaController? = null

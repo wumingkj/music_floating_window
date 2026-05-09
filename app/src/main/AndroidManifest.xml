@@ -17,6 +17,7 @@
 
     <application
         android:allowBackup="true"
+        android:allowAudioPlaybackCapture="true"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@drawable/ic_launcher"
@@ -52,7 +53,7 @@
             android:name="com.wuming.musicFW.services.MusicWallpaperService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|mediaProjection">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="music_edge_glow_overlay" />

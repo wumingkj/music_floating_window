@@ -1,8 +1,10 @@
 ﻿package com.wuming.musicFW
 
 import android.content.Intent
+import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
-import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.tabs.TabLayoutMediator
 import com.wuming.musicFW.managers.AppSettings
@@ -22,6 +24,24 @@ import kotlinx.coroutines.*
 class MainActivity : AppCompatActivity() {
     private lateinit var adapter: MainPagerAdapter
     private var floating = false
+    private var wallpaperBtnRef: android.widget.Button? = null
+    // ActivityResultLauncher 替代废弃的 startActivityForResult
+    private val captureLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK && result.data != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // 通过 Intent 传递授权数据到 Service（比静态变量更可靠）
+                val intent = Intent(this, MusicWallpaperService::class.java).apply {
+                    action = "AUDIO_CAPTURE"
+                    putExtra("resultCode", result.resultCode)
+                    putExtra("resultData", result.data)
+                }
+                startForegroundService(intent)
+                log("内录授权成功！实时音频已启动")
+            }
+        } else {
+            log("内录授权被拒绝", "WARN")
+        }
+    }
     private var currentSong: SongInfo? = null
     private var lyrics: List<LyricsLine> = emptyList()
     private var lyricIdx = -1
@@ -99,11 +119,19 @@ class MainActivity : AppCompatActivity() {
                 log("正在启动 MusicWallpaperService...")
                 val intent = Intent(this@MainActivity, MusicWallpaperService::class.java)
                 android.util.Log.d("MainActivity", "启动服务: $intent")
-                startForegroundService(intent)
-                s.wallpaperBtn.text = "关闭屏幕光晕"
-                val audioNote = if (PermissionManager.hasRecordAudioPermission(this@MainActivity))
-                    "屏幕光晕已开启 (实时音频)" else "屏幕光晕已开启 (模拟节拍, 授权录音可获实时音频)"
-                log(audioNote)
+                log("屏幕光晕已开启")
+                // 请求 AudioPlaybackCapture 授权 (Android 10+)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    try {
+                        val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                        captureLauncher.launch(mpm.createScreenCaptureIntent())
+                        log("请授权屏幕录制以获取实时音频")
+                    } catch (e: Exception) {
+                        log("启动内录授权失败: ${e.message}")
+                    }
+                } else {
+                    log("Android 10+ 才支持实时音频内录")
+                }
             }
         }
         log("界面已绑定")
