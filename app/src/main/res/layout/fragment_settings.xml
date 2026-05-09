@@ -84,6 +84,38 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:text="▎动态壁纸"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="#212121" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="跟随音乐播放的粒子动态壁纸"
+                android:textSize="12sp"
+                android:textColor="#999999"
+                android:paddingBottom="8dp" />
+            <Button android:id="@+id/settingsWallpaperBtn"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:layout_marginTop="8dp"
+                android:text="选择动态壁纸"
+                android:textSize="12sp"
+                android:backgroundTint="#E91E63" />
+        </LinearLayout>
+
+        <!-- 悬浮窗样式设置 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#FFFFFF"
+            android:elevation="1dp"
+            android:padding="14dp"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
                 android:text="▎悬浮窗样式"
                 android:textSize="15sp"
                 android:textStyle="bold"

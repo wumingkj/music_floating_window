@@ -1,5 +1,6 @@
 package com.wuming.musicFW.ui
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -12,6 +13,7 @@ import com.wuming.musicFW.managers.AppSettings
 class SettingsFragment : Fragment() {
     lateinit var permBtn: Button
     lateinit var overlayBtn: Button
+    lateinit var wallpaperBtn: Button
     private lateinit var styleGroup: RadioGroup
     private lateinit var typingSwitch: Switch
     private lateinit var fontSizeSeek: SeekBar
@@ -21,6 +23,7 @@ class SettingsFragment : Fragment() {
         val v = inf.inflate(R.layout.fragment_settings, vg, false)
         permBtn = v.findViewById(R.id.settingsPermBtn)
         overlayBtn = v.findViewById(R.id.settingsOverlayBtn)
+        wallpaperBtn = v.findViewById(R.id.settingsWallpaperBtn)
         styleGroup = v.findViewById(R.id.styleGroup)
         typingSwitch = v.findViewById(R.id.typingSwitch)
         fontSizeSeek = v.findViewById(R.id.fontSizeSeek)

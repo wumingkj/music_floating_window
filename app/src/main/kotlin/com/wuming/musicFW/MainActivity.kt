@@ -1,5 +1,6 @@
 ﻿package com.wuming.musicFW
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -10,6 +11,7 @@ import com.wuming.musicFW.models.LyricsLine
 import com.wuming.musicFW.models.SongInfo
 import com.wuming.musicFW.services.FloatingLyricsService
 import com.wuming.musicFW.services.MediaNotificationService
+import com.wuming.musicFW.services.MusicWallpaperService
 import com.wuming.musicFW.services.NetEaseMusicApi
 import com.wuming.musicFW.ui.MainPagerAdapter
 import com.wuming.musicFW.utils.LogHelper
@@ -74,6 +76,18 @@ class MainActivity : AppCompatActivity() {
             PermissionManager.openNotificationListenerSettings(this)
         }
         s?.overlayBtn?.setOnClickListener { PermissionManager.openOverlaySettings(this) }
+        s?.wallpaperBtn?.setOnClickListener {
+            try {
+                val intent = Intent(Intent.ACTION_SET_WALLPAPER).apply {
+                    component = android.content.ComponentName(
+                        this@MainActivity, com.wuming.musicFW.services.MusicWallpaperService::class.java
+                    )
+                }
+                startActivity(intent)
+            } catch (_: Exception) {
+                startActivity(Intent(Intent.ACTION_SET_WALLPAPER))
+            }
+        }
         log("界面已绑定")
     }
 
@@ -98,6 +112,8 @@ class MainActivity : AppCompatActivity() {
         if (floating && s.albumArt != null) {
             FloatingLyricsService.requestUpdateArt(this, s.albumArt)
         }
+        MusicWallpaperService.updateSongInfo(s.title, s.artist, s.albumArt)
+        MusicWallpaperService.updatePlayingState(true)
         if (!listening) { listening = true; updateMusicBtn() }
         fetchLyrics(s.artist, s.title)
     }
@@ -105,6 +121,7 @@ class MainActivity : AppCompatActivity() {
     private fun onAlbumArt(bmp: android.graphics.Bitmap?) {
         adapter.getMusic()?.albumArtIv?.setImageBitmap(bmp)
         if (floating) FloatingLyricsService.requestUpdateArt(this, bmp)
+        MusicWallpaperService.albumArt = bmp
     }
 
     private fun onPosition(pos: Long) {
@@ -114,6 +131,7 @@ class MainActivity : AppCompatActivity() {
         if (idx == lyricIdx) return
         lyricIdx = idx; renderLyrics()
         if (floating && idx >= 0) FloatingLyricsService.requestUpdate(this, lyrics[idx].text, currentSong?.title ?: "")
+        if (idx >= 0) MusicWallpaperService.updateLyric(lyrics[idx].text)
     }
 
     // ★ 从通知正文直接获取的当前歌词行（实时、准确）
@@ -124,6 +142,7 @@ class MainActivity : AppCompatActivity() {
         log("通知歌词: $lyric")
         adapter.getMusic()?.lyricsTv?.text = "当前歌词:\n$lyric"
         if (floating) FloatingLyricsService.requestUpdate(this, lyric, currentSong?.title ?: "")
+        MusicWallpaperService.updateLyric(lyric)
     }
 
     private fun fetchLyrics(art: String, name: String) {

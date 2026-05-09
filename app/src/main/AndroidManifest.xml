@@ -45,6 +45,20 @@
             android:name="com.wuming.musicFW.services.FloatingLyricsService"
             android:exported="false" />
 
+        <!-- 音乐动态壁纸 -->
+        <service
+            android:name="com.wuming.musicFW.services.MusicWallpaperService"
+            android:enabled="true"
+            android:permission="android.permission.BIND_WALLPAPER"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.wallpaper.WallpaperService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.wallpaper"
+                android:resource="@xml/wallpaper_meta" />
+        </service>
+
         <!-- BootReceiver -->
         <receiver
             android:name=".BootReceiver"
