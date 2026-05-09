@@ -22,6 +22,7 @@ import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.TextView
+import com.wuming.musicFW.ui.GlowTextView
 import android.widget.Toast
 import com.wuming.musicFW.R
 import com.wuming.musicFW.managers.AppSettings
@@ -37,7 +38,7 @@ class FloatingLyricsService : Service() {
     private var typingJob: Runnable? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var fullLyric = ""
-    private var lyricTv: TextView? = null
+    private var lyricTv: GlowTextView? = null
     private var titleTv: TextView? = null
     private var albumArtIv: ImageView? = null
     private var rotateAnim: ObjectAnimator? = null
@@ -224,6 +225,12 @@ class FloatingLyricsService : Service() {
         fullLyric = lyrics
         titleTv?.text = songTitle.ifEmpty { "歌词悬浮窗" }
         applyStyle(lyrics)
+        // 初始化发光参数
+        lyricTv?.glowColor = Color.CYAN
+        lyricTv?.glowBase = 12f
+        lyricTv?.glowMax = 36f
+        lyricTv?.glowAlpha = 180
+        lyricTv?.setMusicLevel(0f)
         LogHelper.d("歌词更新: $lyrics")
     }
 

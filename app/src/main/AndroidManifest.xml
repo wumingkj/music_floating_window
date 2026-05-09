@@ -9,11 +9,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
-    <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+
+    <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" />
 
     <application
         android:allowBackup="true"
@@ -32,7 +32,7 @@
             </intent-filter>
         </activity>
 
-        <!-- 媒体通知监听服务 -->
+        <!-- 媒体监听服务（继承 NotificationListenerService 以获取 MediaSession 权限，不处理通知内容） -->
         <service
             android:name="com.wuming.musicFW.services.MediaNotificationService"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"

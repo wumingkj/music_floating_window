@@ -43,7 +43,7 @@
             android:gravity="center" />
     </LinearLayout>
 
-    <TextView
+    <com.wuming.musicFW.ui.GlowTextView
         android:id="@+id/floatingLyricText"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"

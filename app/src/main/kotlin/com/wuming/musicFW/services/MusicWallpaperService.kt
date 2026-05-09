@@ -14,6 +14,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.view.*
 import com.wuming.musicFW.managers.AppSettings
+import com.wuming.musicFW.utils.LogHelper
 import kotlin.math.*
 import kotlin.random.Random
 
@@ -91,11 +92,22 @@ class MusicWallpaperService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        
+        android.util.Log.d("MusicWallpaperService", "=== MusicWallpaperService onCreate ===")
+        
+        // 初始化设置
+        AppSettings.init(this)
+        android.util.Log.d("MusicWallpaperService", "Service created, settings: intensity=${AppSettings.glowIntensity}, speed=${AppSettings.glowHueSpeed}")
+        
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
         startForeground(1, buildNotification())
+        android.util.Log.d("MusicWallpaperService", "前台服务已启动")
+        
         setupVisualizer()
         showOverlay()
+        
+        android.util.Log.d("MusicWallpaperService", "=== MusicWallpaperService onCreate 完成 ===")
     }
 
     override fun onDestroy() {
@@ -111,10 +123,17 @@ class MusicWallpaperService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        android.util.Log.d("MusicWallpaperService", "=== onStartCommand ===")
+        android.util.Log.d("MusicWallpaperService", "action: ${intent?.action}")
+        android.util.Log.d("MusicWallpaperService", "startId: $startId")
+        
         if (intent?.action == "STOP") {
+            android.util.Log.d("MusicWallpaperService", "收到 STOP 命令，停止服务")
             stopSelf()
             return START_NOT_STICKY
         }
+        
+        android.util.Log.d("MusicWallpaperService", "服务正在运行")
         return START_STICKY
     }
 
@@ -136,17 +155,21 @@ class MusicWallpaperService : Service() {
 
     @Suppress("DEPRECATION")
     private fun buildNotification(): Notification {
-        val label = if (realAudio) "屏幕光晕 (实时音频)" else "屏幕光晕 (模拟节拍)"
-        val text = if (isPlaying) "正在播放: $songTitle" else "光晕待机中"
+        val status = when {
+            realAudio -> "🎵 实时音频"
+            isPlaying -> "🎵 模拟节拍 (授权录音可获实时)"
+            else -> "⏸ 待机中"
+        }
+        val text = if (isPlaying) "$songTitle - $songArtist" else "光晕待机中"
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle(label)
+                .setContentTitle("屏幕光晕 · $status")
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.ic_menu_gallery)
                 .build()
         } else {
             Notification.Builder(this)
-                .setContentTitle(label)
+                .setContentTitle("屏幕光晕 · $status")
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.ic_menu_gallery)
                 .setPriority(Notification.PRIORITY_LOW)
@@ -159,12 +182,42 @@ class MusicWallpaperService : Service() {
     // ═══════════════════════════════════════════
 
     private fun setupVisualizer() {
+        // 检查录音权限
+        val hasRecordPermission = android.Manifest.permission.RECORD_AUDIO.let { perm ->
+            android.content.pm.PackageManager.PERMISSION_GRANTED == checkSelfPermission(perm)
+        }
+        LogHelper.d("录音权限: $hasRecordPermission")
+        android.util.Log.d("MusicWallpaperService", "录音权限: $hasRecordPermission")
+        
+        if (!hasRecordPermission) {
+            LogHelper.e("缺少录音权限，无法使用 Visualizer")
+            realAudio = false
+            return
+        }
+        
+        // 1️⃣ 先试全局混音 Visualizer(0)
+        var sessionId = 0
+        var vis: Visualizer? = null
         try {
-            val vis = Visualizer(0)
+            vis = Visualizer(0)
+            LogHelper.d("Visualizer(0) 全局混音创建成功")
+        } catch (e: Exception) {
+            LogHelper.e("Visualizer(0) 失败: ${e.message}")
+            // 2️⃣ 延迟重试，等 MediaNotificationService 就绪后再取 session ID
+            retryVisualizerWithSession(1)
+        }
+        
+        if (vis == null) {
+            realAudio = false
+            return
+        }
+        
+        // 初始化成功
+        try {
             val captureSize = Visualizer.getCaptureSizeRange()[1].coerceAtMost(2048)
             vis.captureSize = captureSize
             fftData = ByteArray(captureSize)
-
+            
             vis.setDataCaptureListener(
                 object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(
@@ -177,18 +230,73 @@ class MusicWallpaperService : Service() {
                         fft?.let { src ->
                             fftData?.let { dst -> src.copyInto(dst, 0, 0, minOf(src.size, dst.size)) }
                         }
+                        if (frame % 30 == 0) {
+                            val sampleBins = (0 until minOf(8, fft?.let { it.size / 2 } ?: 0)).joinToString(", ") { i ->
+                                String.format("%.2f", fft?.let { fftMagnitude(it, i) } ?: 0f)
+                            }
+                            LogHelper.d("FFT[session=$sessionId]: [$sampleBins]")
+                        }
                     }
                 },
                 Visualizer.getMaxCaptureRate(),
-                true,
-                true // scope = media
+                true, false // waveform=false, fft=true
             )
             vis.enabled = true
             visualizer = vis
             realAudio = true
-        } catch (_: Exception) {
+            LogHelper.d("Visualizer 已启用 (session=$sessionId)，实时音频模式")
+        } catch (e: Exception) {
+            vis.release()
             realAudio = false
+            LogHelper.e("Visualizer 初始化失败: ${e.message}")
         }
+    }
+
+    /** 延迟重试：等 MediaNotificationService 就绪后通过 MediaController 取 session ID */
+    private fun retryVisualizerWithSession(attempt: Int) {
+        if (attempt > 5) { // 最多重试5次
+            LogHelper.e("Visualizer 重试 $attempt 次后放弃，使用模拟节拍")
+            return
+        }
+        handler.postDelayed({
+            try {
+                val sessionId = com.wuming.musicFW.services.MediaNotificationService.getAudioSessionId()
+                LogHelper.d("重试 #$attempt: 获取到 sessionId=$sessionId")
+                if (sessionId > 0) {
+                    val vis = Visualizer(sessionId)
+                    val captureSize = Visualizer.getCaptureSizeRange()[1].coerceAtMost(2048)
+                    vis.captureSize = captureSize
+                    fftData = ByteArray(captureSize)
+                    vis.setDataCaptureListener(
+                        object : Visualizer.OnDataCaptureListener {
+                            override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, r: Int) {}
+                            override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, r: Int) {
+                                fft?.let { src ->
+                                    fftData?.let { dst -> src.copyInto(dst, 0, 0, minOf(src.size, dst.size)) }
+                                }
+                                if (frame % 30 == 0) {
+                                    val sample = (0 until minOf(8, fft?.let { it.size / 2 } ?: 0)).joinToString(", ") { i ->
+                                        String.format("%.2f", fft?.let { fftMagnitude(it, i) } ?: 0f)
+                                    }
+                                    LogHelper.d("FFT[session=$sessionId]: [$sample]")
+                                }
+                            }
+                        },
+                        Visualizer.getMaxCaptureRate(),
+                        true, false
+                    )
+                    vis.enabled = true
+                    visualizer = vis
+                    realAudio = true
+                    LogHelper.d("Visualizer($sessionId) 延迟重试成功！实时音频模式")
+                } else {
+                    retryVisualizerWithSession(attempt + 1)
+                }
+            } catch (e: Exception) {
+                LogHelper.e("重试 #$attempt 失败: ${e.message}")
+                retryVisualizerWithSession(attempt + 1)
+            }
+        }, 2000L) // 每2秒重试一次
     }
 
     // ═══════════════════════════════════════════
@@ -197,33 +305,39 @@ class MusicWallpaperService : Service() {
 
     @Suppress("DEPRECATION")
     private fun showOverlay() {
-        val glowView = GlowView(this)
-        overlayView = glowView
+        try {
+            val glowView = GlowView(this)
+            overlayView = glowView
 
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else
-            WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY
+            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY
 
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            type,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                or WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
-                or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON,
-            PixelFormat.TRANSLUCENT
-        )
-        params.gravity = Gravity.TOP or Gravity.START
-        windowManager.addView(glowView, params)
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                type,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                    or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                    or WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                    or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON,
+                PixelFormat.TRANSLUCENT
+            )
+            params.gravity = Gravity.TOP or Gravity.START
+            windowManager.addView(glowView, params)
 
-        glowView.post {
-            initParticles(glowView.width.toFloat(), glowView.height.toFloat())
-            drawing = true
-            handler.post(drawRunnable)
+            glowView.post {
+                initParticles(glowView.width.toFloat(), glowView.height.toFloat())
+                drawing = true
+                android.util.Log.d("MusicWallpaperService", "Overlay shown, drawing=$drawing, view size: ${glowView.width}x${glowView.height}")
+                handler.post(drawRunnable)
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MusicWallpaperService", "Failed to show overlay: ${e.message}", e)
+            drawing = false
         }
     }
 
@@ -238,14 +352,30 @@ class MusicWallpaperService : Service() {
 
     private val drawRunnable = object : Runnable {
         override fun run() {
-            if (!drawing) return
+            if (!drawing) {
+                android.util.Log.d("MusicWallpaperService", "DrawRunnable stopped: drawing=$drawing")
+                return
+            }
             frame++
             colorHue = (colorHue + AppSettings.glowHueSpeed * 0.005f) % 360f
             updateBeat()
-            val view = overlayView ?: return
+            // 每60帧更新一次通知（显示实时状态）
+            if (frame % 60 == 0) {
+                try {
+                    val nm = getSystemService(NotificationManager::class.java)
+                    nm?.notify(1, buildNotification())
+                } catch (_: Exception) {}
+            }
+            val view = overlayView
+            if (view == null) {
+                android.util.Log.w("MusicWallpaperService", "DrawRunnable: overlayView is null")
+                handler.postDelayed(this, 100)
+                return
+            }
             val w = view.width.toFloat()
             val h = view.height.toFloat()
             if (w <= 0f || h <= 0f) {
+                android.util.Log.d("MusicWallpaperService", "DrawRunnable: invalid view size: ${view.width}x${view.height}")
                 handler.postDelayed(this, 100)
                 return
             }
@@ -341,6 +471,9 @@ class MusicWallpaperService : Service() {
             if (realAudio && fftData != null) {
                 updateBeatFromAudio()
             } else {
+                if (frame % 60 == 0) {
+                    LogHelper.d("模拟节拍模式 (设备不支持 Visualizer)")
+                }
                 updateBeatSimulated()
             }
         } else {
@@ -360,6 +493,17 @@ class MusicWallpaperService : Service() {
         val fft = fftData ?: return
         val numBins = fft.size / 2
         if (numBins < 4) return
+
+        // 每30帧打印一次 FFT 采样数据，证明确实获取到了音频
+        if (frame % 30 == 0) {
+            val sampleBins = (0 until minOf(16, numBins)).joinToString(", ") { i ->
+                String.format("%.2f", fftMagnitude(fft, i))
+            }
+            android.util.Log.i("Visualizer", "=== FFT 前16个bin幅度: [$sampleBins] ===")
+            android.util.Log.i("Visualizer", "FFT总bin数=$numBins, captureSize=${fft.size}")
+            // 也输出到 MusicFW 标签，方便 adb logcat -s MusicFW 查看
+            LogHelper.d("FFT 数据: bins=$numBins, 采样=[$sampleBins]")
+        }
 
         // 频段划分: bass 0~5%, mid 5~25%, treble 25%~
         val bassEnd = max(2, (numBins * 0.05f).toInt())
@@ -389,6 +533,19 @@ class MusicWallpaperService : Service() {
         beat.treble = (trebleSum / max(1, numBins - midEnd) * sens * 1.6f).coerceIn(0f, 1f)
         beat.energy = beat.bass * 0.5f + beat.mid * 0.3f + beat.treble * 0.2f
 
+        // 打印音频分析数据
+        if (frame % 30 == 0) { // 每30帧打印一次，避免日志过多
+            android.util.Log.d("MusicWallpaperService", "=== 音频分析数据 ===")
+            android.util.Log.d("MusicWallpaperService", "FFT bins: $numBins")
+            android.util.Log.d("MusicWallpaperService", "Bass bins: 1~$bassEnd, Mid bins: $bassEnd~$midEnd, Treble bins: $midEnd~$numBins")
+            android.util.Log.d("MusicWallpaperService", "Bass: ${String.format("%.3f", beat.bass)}")
+            android.util.Log.d("MusicWallpaperService", "Mid: ${String.format("%.3f", beat.mid)}")
+            android.util.Log.d("MusicWallpaperService", "Treble: ${String.format("%.3f", beat.treble)}")
+            android.util.Log.d("MusicWallpaperService", "Energy: ${String.format("%.3f", beat.energy)}")
+            android.util.Log.d("MusicWallpaperService", "Sensitivity: ${String.format("%.3f", sens)}")
+            android.util.Log.d("MusicWallpaperService", "====================")
+        }
+
         // Beat 检测: 灵敏度越高阈值越低
         val threshold = 1.5f - AppSettings.glowBeatSens * 0.01f // 50->1.0, 100->0.5
         prevEnergySmooth = prevEnergySmooth * 0.92f + beat.bass * 0.08f
@@ -397,6 +554,7 @@ class MusicWallpaperService : Service() {
             val view = overlayView ?: return
             val maxDim = min(view.width, view.height).toFloat()
             ripples.add(Ripple(frame, colorHue, maxDim * 0.5f))
+            android.util.Log.d("MusicWallpaperService", "Beat detected! Pulse: ${String.format("%.3f", beat.beatPulse)}")
         }
     }
 
@@ -421,11 +579,22 @@ class MusicWallpaperService : Service() {
             beat.treble = intensity * (Random.nextFloat() * 0.2f + 0.1f)
             beat.energy = beat.bass * 0.5f + beat.mid * 0.3f + beat.treble * 0.2f
 
+            // 每60帧打印一次模拟数据
+            if (frame % 60 == 0) {
+                android.util.Log.d("MusicWallpaperService", "=== 模拟节拍数据 ===")
+                android.util.Log.d("MusicWallpaperService", "Bass: ${String.format("%.3f", beat.bass)}")
+                android.util.Log.d("MusicWallpaperService", "Mid: ${String.format("%.3f", beat.mid)}")
+                android.util.Log.d("MusicWallpaperService", "Treble: ${String.format("%.3f", beat.treble)}")
+                android.util.Log.d("MusicWallpaperService", "Energy: ${String.format("%.3f", beat.energy)}")
+                android.util.Log.d("MusicWallpaperService", "====================")
+            }
+
             if (beat.energy > 0.3f) {
                 beat.beatPulse = beat.energy
                 val view = overlayView ?: return
                 val maxDim = min(view.width, view.height).toFloat()
                 ripples.add(Ripple(frame, colorHue, maxDim * 0.4f))
+                android.util.Log.d("MusicWallpaperService", "模拟 Beat detected! Pulse: ${String.format("%.3f", beat.beatPulse)}")
             }
         }
     }
@@ -435,30 +604,30 @@ class MusicWallpaperService : Service() {
     // ═══════════════════════════════════════════
 
     private fun drawEdgeGlow(canvas: Canvas, w: Float, h: Float) {
-        // 亮度倍率: intensity 0~100 -> 0.3~2.0
-        val intMul = AppSettings.glowIntensity * 0.017f + 0.3f
+        // 亮度倍率: intensity 0~100 -> 0.5~4.0 (加大强度)
+        val intMul = AppSettings.glowIntensity * 0.035f + 0.5f
         // 呼吸基础亮度
-        val baseBreath = sin(frame * 0.015f) * 0.06f + 0.12f
+        val baseBreath = sin(frame * 0.02f) * 0.1f + 0.2f
         val pulse = beat.beatPulse
-        val playBoost = if (isPlaying) 0.15f else 0f
+        val playBoost = if (isPlaying) 0.25f else 0f
 
         val brightness = min(1f, (baseBreath + playBoost + pulse) * intMul)
         if (brightness < 0.02f) return
 
-        // 扩散深度: spread 0~100 -> 20~200px 基础
-        val spreadBase = AppSettings.glowSpread * 1.8f + 20f
-        val edgeDepth = spreadBase + pulse * spreadBase * 0.8f + (if (isPlaying) 15f else 0f)
+        // 扩散深度: spread 0~100 -> 30~300px 基础 (加大)
+        val spreadBase = AppSettings.glowSpread * 2.7f + 30f
+        val edgeDepth = spreadBase + pulse * spreadBase * 1.2f + (if (isPlaying) 30f else 0f)
 
         val hue1 = colorHue % 360
         val hue2 = (colorHue + 120f) % 360
         val hue3 = (colorHue + 240f) % 360
 
-        val a1 = (brightness * 120).toInt().coerceIn(0, 255)
-        val a2 = ((brightness * 0.5f) * 120).toInt().coerceIn(0, 255)
+        val a1 = (brightness * 180).toInt().coerceIn(0, 255)
+        val a2 = ((brightness * 0.6f) * 180).toInt().coerceIn(0, 255)
         if (a1 <= 2) return
 
-        // ── 扫光 (单道) ──
-        val sweepSpeed = if (isPlaying) 2.5f else 1f
+        // ── 扫光 (加快速度) ──
+        val sweepSpeed = if (isPlaying) 4.0f else 1.5f
         val perimeter = 2f * (w + h)
         val sweepPos = (frame * sweepSpeed) % perimeter
         var sweepX: Float; var sweepY: Float
@@ -468,10 +637,10 @@ class MusicWallpaperService : Service() {
             sweepPos < 2 * w + h -> { sweepX = 2 * w + h - sweepPos; sweepY = h }
             else -> { sweepX = 0f; sweepY = perimeter - sweepPos }
         }
-        val sweepRadius = spreadBase * 1.5f + pulse * spreadBase * 0.5f
-        val sweepAlpha = (brightness * 140).toInt().coerceIn(0, 255)
+        val sweepRadius = spreadBase * 2.0f + pulse * spreadBase * 1.0f
+        val sweepAlpha = (brightness * 180).toInt().coerceIn(0, 255)
         if (sweepAlpha > 2) {
-            val sweepColor = Color.HSVToColor(sweepAlpha, arrayOf(hue1, 0.7f, 1f).toFloatArray())
+            val sweepColor = Color.HSVToColor(sweepAlpha, arrayOf(hue1, 0.8f, 1f).toFloatArray())
             canvas.saveLayer(null, null)
             canvas.clipRect(
                 max(0f, sweepX - sweepRadius), max(0f, sweepY - sweepRadius),
@@ -483,11 +652,11 @@ class MusicWallpaperService : Service() {
             canvas.restore()
         }
 
-        // ── 四边光晕带 ──
-        val topColor = Color.HSVToColor(a1, arrayOf(hue1, 0.6f, 1f).toFloatArray())
-        val botColor = Color.HSVToColor(a1, arrayOf(hue2, 0.6f, 1f).toFloatArray())
-        val leftColor = Color.HSVToColor(a2, arrayOf(hue3, 0.6f, 1f).toFloatArray())
-        val rightColor = Color.HSVToColor(a2, arrayOf(hue1, 0.6f, 1f).toFloatArray())
+        // ── 四边光晕带 (加大颜色深度) ──
+        val topColor = Color.HSVToColor(a1, arrayOf(hue1, 0.8f, 1f).toFloatArray())
+        val botColor = Color.HSVToColor(a1, arrayOf(hue2, 0.8f, 1f).toFloatArray())
+        val leftColor = Color.HSVToColor(a2, arrayOf(hue3, 0.8f, 1f).toFloatArray())
+        val rightColor = Color.HSVToColor(a2, arrayOf(hue1, 0.8f, 1f).toFloatArray())
 
         canvas.drawRect(0f, 0f, w, edgeDepth, Paint().apply {
             shader = LinearGradient(0f, 0f, 0f, edgeDepth, topColor, Color.TRANSPARENT, Shader.TileMode.CLAMP)
@@ -502,9 +671,9 @@ class MusicWallpaperService : Service() {
             shader = LinearGradient(w, 0f, w - edgeDepth, 0f, rightColor, Color.TRANSPARENT, Shader.TileMode.CLAMP)
         })
 
-        // ── 四角光点 ──
-        val cornerRadius = spreadBase * 0.8f + pulse * spreadBase * 0.4f
-        val cornerAlpha = (brightness * 100).toInt().coerceIn(0, 255)
+        // ── 四角光点 (加大) ──
+        val cornerRadius = spreadBase * 1.2f + pulse * spreadBase * 0.6f
+        val cornerAlpha = (brightness * 150).toInt().coerceIn(0, 255)
         if (cornerAlpha > 2) {
             val corners = listOf(
                 Triple(0f, 0f, hue1),
@@ -513,7 +682,7 @@ class MusicWallpaperService : Service() {
                 Triple(0f, h, hue1)
             )
             for ((cx2, cy2, hue) in corners) {
-                val cc = Color.HSVToColor(cornerAlpha, arrayOf(hue, 0.5f, 1f).toFloatArray())
+                val cc = Color.HSVToColor(cornerAlpha, arrayOf(hue, 0.7f, 1f).toFloatArray())
                 canvas.saveLayer(null, null)
                 canvas.clipRect(
                     max(0f, cx2 - cornerRadius), max(0f, cy2 - cornerRadius),
@@ -526,11 +695,11 @@ class MusicWallpaperService : Service() {
             }
         }
 
-        // ── beat时边线 ──
-        if (pulse > 0.3f) {
-            val flashW = 1.5f + pulse * 3f
-            val flashAlpha = (pulse * 180).toInt().coerceIn(0, 255)
-            val flashColor = Color.HSVToColor(flashAlpha, arrayOf(hue1, 0.5f, 1f).toFloatArray())
+        // ── beat时边线闪白 (加强) ──
+        if (pulse > 0.2f) {
+            val flashW = 2f + pulse * 4f
+            val flashAlpha = (pulse * 220).toInt().coerceIn(0, 255)
+            val flashColor = Color.argb(flashAlpha, 255, 255, 255)
             val fp = Paint().apply { color = flashColor }
             canvas.drawRect(0f, 0f, w, flashW, fp)
             canvas.drawRect(0f, h - flashW, w, h, fp)
@@ -547,14 +716,23 @@ class MusicWallpaperService : Service() {
         init {
             setWillNotDraw(false)
             setLayerType(LAYER_TYPE_SOFTWARE, null)
+            android.util.Log.d("MusicWallpaperService", "GlowView created")
         }
 
         override fun onDraw(canvas: Canvas) {
-            if (!drawing) return
+            if (!drawing) {
+                android.util.Log.d("MusicWallpaperService", "GlowView.onDraw: drawing=$drawing")
+                return
+            }
             super.onDraw(canvas)
             val w = width.toFloat()
             val h = height.toFloat()
-            if (w <= 0f || h <= 0f) return
+            if (w <= 0f || h <= 0f) {
+                android.util.Log.d("MusicWallpaperService", "GlowView.onDraw: invalid size: ${width}x${height}")
+                return
+            }
+
+            android.util.Log.v("MusicWallpaperService", "GlowView.onDraw: frame=$frame, drawing=$drawing, isPlaying=$isPlaying, hue=$colorHue")
 
             // ═══ 1) 边缘光晕 ═══
             drawEdgeGlow(canvas, w, h)

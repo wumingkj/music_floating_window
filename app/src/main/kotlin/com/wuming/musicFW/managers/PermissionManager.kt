@@ -20,13 +20,6 @@ object PermissionManager {
         return enabled != null && enabled.contains(context.packageName)
     }
 
-    fun isNotificationServiceEnabled(context: Context, serviceName: String): Boolean {
-        val enabled = Settings.Secure.getString(
-            context.contentResolver, "enabled_notification_listeners"
-        )
-        return enabled != null && enabled.contains(serviceName)
-    }
-
     fun openNotificationListenerSettings(context: Context) {
         val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

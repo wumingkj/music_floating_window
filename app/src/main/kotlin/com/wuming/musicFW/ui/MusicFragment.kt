@@ -21,8 +21,6 @@ class MusicFragment : Fragment() {
     lateinit var positionTv: TextView
     lateinit var lyricsTv: TextView
     lateinit var lyricsScroll: ScrollView
-    lateinit var listenBtn: Button
-    lateinit var permissionBtn: Button
     lateinit var floatingBtn: Button
     lateinit var albumArtIv: ImageView
     private var rotateAnim: ObjectAnimator? = null
@@ -35,8 +33,6 @@ class MusicFragment : Fragment() {
         positionTv = v.findViewById(R.id.positionTextView)
         lyricsTv = v.findViewById(R.id.lyricsTextView)
         lyricsScroll = v.findViewById(R.id.lyricsScroll)
-        listenBtn = v.findViewById(R.id.listenButton)
-        permissionBtn = v.findViewById(R.id.permissionButton)
         floatingBtn = v.findViewById(R.id.floatingButton)
         albumArtIv = v.findViewById(R.id.albumArtImageView)
         // 圆形裁切

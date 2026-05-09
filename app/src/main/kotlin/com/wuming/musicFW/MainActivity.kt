@@ -21,7 +21,6 @@ import kotlinx.coroutines.*
 
 class MainActivity : AppCompatActivity() {
     private lateinit var adapter: MainPagerAdapter
-    private var listening = false
     private var floating = false
     private var currentSong: SongInfo? = null
     private var lyrics: List<LyricsLine> = emptyList()
@@ -46,16 +45,24 @@ class MainActivity : AppCompatActivity() {
 
         pager.postDelayed({
             bindFragments()
-            // 刷新缓冲区到界面
             flushLogBuffer()
         }, 300)
 
+        // ★ 通过 MediaSession 获取音乐数据（NotificationListenerService 提供跨 App 访问权限）
+        //    系统会在用户授予通知监听权限后自动启动服务
         MediaNotificationService.setCallbacks(
             onSongChanged = { s -> runOnUiThread { onSongChange(s) } },
             onPositionUpdate = { p -> runOnUiThread { onPosition(p) } },
             onLyricLine = { lyric -> runOnUiThread { onNotifyLyric(lyric) } },
-            onAlbumArtChanged = { bmp -> runOnUiThread { onAlbumArt(bmp) } }
+            onAlbumArtChanged = { bmp -> runOnUiThread { onAlbumArt(bmp) } },
+            onLog = { msg, level -> runOnUiThread { log("[MediaSession] $msg", level) } }
         )
+        // 触发扫描（延迟等待服务就绪）
+        pager.postDelayed({
+            MediaNotificationService.triggerScan(this)
+            log("已触发首次 MediaSession 扫描")
+        }, 1000)
+
         FloatingLyricsService.onCloseCallback = {
             runOnUiThread { floating = false; adapter.getMusic()?.floatingBtn?.text = "开启悬浮"; log("悬浮窗已关闭") }
         }
@@ -65,15 +72,10 @@ class MainActivity : AppCompatActivity() {
     private fun bindFragments() {
         val m = adapter.getMusic()
         val s = adapter.getSettings()
-        m?.listenBtn?.setOnClickListener { if (listening) stopListening() else startListening() }
-        m?.permissionBtn?.setOnClickListener {
-            PermissionManager.requestPostNotificationPermission(this, this)
-            PermissionManager.openNotificationListenerSettings(this)
-        }
         m?.floatingBtn?.setOnClickListener { toggleFloating() }
         s?.permBtn?.setOnClickListener {
-            PermissionManager.requestPostNotificationPermission(this, this)
             PermissionManager.openNotificationListenerSettings(this)
+            log("请在设置中找到\"Music Floating Window\"并开启通知监听权限")
         }
         s?.overlayBtn?.setOnClickListener { PermissionManager.openOverlaySettings(this) }
         s?.wallpaperBtn?.setOnClickListener {
@@ -94,7 +96,10 @@ class MainActivity : AppCompatActivity() {
                 if (!PermissionManager.hasRecordAudioPermission(this@MainActivity)) {
                     PermissionManager.requestRecordAudioPermission(this@MainActivity)
                 }
-                startForegroundService(Intent(this@MainActivity, MusicWallpaperService::class.java))
+                log("正在启动 MusicWallpaperService...")
+                val intent = Intent(this@MainActivity, MusicWallpaperService::class.java)
+                android.util.Log.d("MainActivity", "启动服务: $intent")
+                startForegroundService(intent)
                 s.wallpaperBtn.text = "关闭屏幕光晕"
                 val audioNote = if (PermissionManager.hasRecordAudioPermission(this@MainActivity))
                     "屏幕光晕已开启 (实时音频)" else "屏幕光晕已开启 (模拟节拍, 授权录音可获实时音频)"
@@ -127,7 +132,6 @@ class MainActivity : AppCompatActivity() {
         }
         MusicWallpaperService.updateSongInfo(s.title, s.artist, s.albumArt)
         MusicWallpaperService.updatePlayingState(true)
-        if (!listening) { listening = true; updateMusicBtn() }
         fetchLyrics(s.artist, s.title)
     }
 
@@ -145,37 +149,91 @@ class MainActivity : AppCompatActivity() {
         lyricIdx = idx; renderLyrics()
         if (floating && idx >= 0) FloatingLyricsService.requestUpdate(this, lyrics[idx].text, currentSong?.title ?: "")
         if (idx >= 0) MusicWallpaperService.updateLyric(lyrics[idx].text)
+        // ★ 动态发光：使用MusicWallpaperService的beat数据驱动光晕效果
+        if (floating) {
+            try {
+                // 通过反射获取MusicWallpaperService的beat数据
+                val wallpaperClass = Class.forName("com.wuming.musicFW.services.MusicWallpaperService")
+                val beatField = wallpaperClass.getDeclaredField("beat")
+                beatField.isAccessible = true
+                val beat = beatField.get(null)
+                val energyField = beat.javaClass.getDeclaredField("energy")
+                energyField.isAccessible = true
+                val energy = energyField.getFloat(beat)
+                
+                // 通过反射获取FloatingLyricsService实例并设置光晕级别
+                val serviceClass = Class.forName("com.wuming.musicFW.services.FloatingLyricsService")
+                val instanceField = serviceClass.getDeclaredField("instance")
+                instanceField.isAccessible = true
+                val instance = instanceField.get(null)
+                if (instance != null) {
+                    val lyricTvField = serviceClass.getDeclaredField("lyricTv")
+                    lyricTvField.isAccessible = true
+                    val lyricTv = lyricTvField.get(instance)
+                    if (lyricTv != null) {
+                        val setLevelMethod = lyricTv.javaClass.getMethod("setMusicLevel", Float::class.java)
+                        setLevelMethod.invoke(lyricTv, energy)
+                    }
+                }
+            } catch (e: Exception) {
+                // 如果反射失败，使用简单的模拟效果
+                val level = ((pos % 2000) / 2000f).let { x -> 0.5f + 0.5f * kotlin.math.sin(x * Math.PI * 2).toFloat() }
+                try {
+                    val serviceClass = Class.forName("com.wuming.musicFW.services.FloatingLyricsService")
+                    val instanceField = serviceClass.getDeclaredField("instance")
+                    instanceField.isAccessible = true
+                    val instance = instanceField.get(null)
+                    if (instance != null) {
+                        val lyricTvField = serviceClass.getDeclaredField("lyricTv")
+                        lyricTvField.isAccessible = true
+                        val lyricTv = lyricTvField.get(instance)
+                        if (lyricTv != null) {
+                            val setLevelMethod = lyricTv.javaClass.getMethod("setMusicLevel", Float::class.java)
+                            setLevelMethod.invoke(lyricTv, level)
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
     }
 
-    // ★ 从通知正文直接获取的当前歌词行（实时、准确）
+    // ★ 从 MediaSession metadata 获取的歌词行
     private var lastNotifyLyric = ""
     private fun onNotifyLyric(lyric: String) {
         if (lyric == lastNotifyLyric) return
         lastNotifyLyric = lyric
-        log("通知歌词: $lyric")
+        log("媒体歌词: $lyric")
         adapter.getMusic()?.lyricsTv?.text = "当前歌词:\n$lyric"
         if (floating) FloatingLyricsService.requestUpdate(this, lyric, currentSong?.title ?: "")
         MusicWallpaperService.updateLyric(lyric)
     }
 
     private fun fetchLyrics(art: String, name: String) {
+        // 清空上次歌词，防止串歌
+        lyrics = emptyList()
+        lyricIdx = -1
+        lastNotifyLyric = ""
         scope.launch {
             try {
                 log("搜索歌词: $art - $name")
                 val result = NetEaseMusicApi.searchSong("$art $name") ?: run {
-                    log("搜索失败"); adapter.getMusic()?.lyricsTv?.text = "暂无歌词"; return@launch
+                    log("搜索失败"); adapter.getMusic()?.lyricsTv?.text = "暂无歌词"; clearFloatingLyrics(); return@launch
                 }
                 val id = result.get("id")?.asLong ?: run { log("未找到歌曲 ID"); return@launch }
                 log("找到歌曲 ID: $id")
                 val lyricJson = NetEaseMusicApi.getLyric(id) ?: run {
-                    log("获取歌词失败-接口返回null"); adapter.getMusic()?.lyricsTv?.text = "暂无歌词"; return@launch
+                    log("获取歌词失败-接口返回null"); adapter.getMusic()?.lyricsTv?.text = "暂无歌词"; clearFloatingLyrics(); return@launch
                 }
                 val lrc = lyricJson.getAsJsonObject("lrc") ?: run {
                     log("歌词无 lrc 字段: ${lyricJson?.toString()?.take(200)}")
-                    adapter.getMusic()?.lyricsTv?.text = "暂无歌词"; return@launch
+                    adapter.getMusic()?.lyricsTv?.text = "暂无歌词"; clearFloatingLyrics(); return@launch
                 }
                 val text = lrc.get("lyric")?.asString ?: ""
-                if (text.isEmpty()) { adapter.getMusic()?.lyricsTv?.text = "暂无歌词"; return@launch }
+                if (text.isEmpty()) {
+                    adapter.getMusic()?.lyricsTv?.text = "纯音乐，暂无歌词"
+                    clearFloatingLyrics()
+                    return@launch
+                }
                 lyrics = LyricsParser.parseLyric(text)
                 log("歌词 ${lyrics.size} 行"); renderLyrics()
             } catch (e: Exception) { log("歌词出错: ${e.message}") }
@@ -231,15 +289,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startListening() {
-        if (!PermissionManager.hasNotificationListenerPermission(this)) {
-            log("未开启通知监听权限"); PermissionManager.openNotificationListenerSettings(this); return
-        }
-        listening = true; updateMusicBtn(); log("开始监听通知")
-    }
-    private fun stopListening() { listening = false; updateMusicBtn(); log("停止监听") }
-    private fun updateMusicBtn() { adapter.getMusic()?.listenBtn?.text = if (listening) "停止监听" else "开始监听" }
-
     private fun toggleFloating() { if (floating) hideFloating() else showFloating() }
     private fun showFloating() {
         if (!PermissionManager.hasOverlayPermission(this)) {
@@ -254,18 +303,33 @@ class MainActivity : AppCompatActivity() {
         adapter.getMusic()?.floatingBtn?.text = "开启悬浮"; log("悬浮窗已关闭")
     }
 
-    private fun log(msg: String) {
+    private fun clearFloatingLyrics() {
+        if (floating) FloatingLyricsService.requestUpdate(this, "暂无歌词", currentSong?.title ?: "")
+        MusicWallpaperService.updateLyric("")
+    }
+
+    /** 写入 UI 日志，支持级别: INFO, VERBOSE, WARN, ERROR */
+    private fun log(msg: String, level: String = "INFO") {
         val ts = TimeFormatter.formatTimestamp(System.currentTimeMillis())
-        val line = "$ts $msg\n"
-        // 始终输出到 logcat（adb 可看）
-        LogHelper.d(msg)
+        val prefix = when (level) {
+            "VERBOSE" -> "  "
+            "WARN" -> "⚠ "
+            "ERROR" -> "❌ "
+            else -> ""
+        }
+        val line = "$ts $prefix$msg\n"
+        // 输出到 logcat
+        when (level) {
+            "ERROR" -> LogHelper.e(msg)
+            "WARN" -> LogHelper.w(msg)
+            else -> LogHelper.d(msg)
+        }
         runOnUiThread {
             val f = adapter.getLog()
             if (f != null) {
                 val cur = f.debugLog.text.toString()
                 f.debugLog.text = if (cur.length > 3000) (line + cur).substring(0, 3000) else "$line$cur"
             } else {
-                // fragment 未就绪 → 入缓冲区
                 synchronized(logBuffer) { logBuffer.add(line) }
             }
         }

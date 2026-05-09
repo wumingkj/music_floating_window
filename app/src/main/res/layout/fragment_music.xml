@@ -129,41 +129,10 @@
         android:elevation="1dp">
 
         <Button
-            android:id="@+id/listenButton"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:text="开始监听"
-            android:textSize="13sp"
-            android:background="@null"
-            android:textColor="#6200EE" />
-
-        <View
-            android:layout_width="1dp"
-            android:layout_height="match_parent"
-            android:background="#E0E0E0" />
-
-        <Button
-            android:id="@+id/permissionButton"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:text="权限设置"
-            android:textSize="13sp"
-            android:background="@null"
-            android:textColor="#6200EE" />
-
-        <View
-            android:layout_width="1dp"
-            android:layout_height="match_parent"
-            android:background="#E0E0E0" />
-
-        <Button
             android:id="@+id/floatingButton"
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:text="开启悬浮"
+            android:text="开启悬浮窗"
             android:textSize="13sp"
             android:background="@null"
             android:textColor="#6200EE" />
