@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">音乐悬浮窗</string>
+    <string name="accessibility_service_description">音乐悬浮窗无障碍服务，用于监听通知和界面变化</string>
+</resources>
