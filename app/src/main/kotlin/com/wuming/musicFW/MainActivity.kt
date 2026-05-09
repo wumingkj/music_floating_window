@@ -1,358 +1,200 @@
 package com.wuming.musicFW
 
-import android.Manifest
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
-import android.view.View
 import android.widget.*
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import com.wuming.musicFW.managers.LyricsManager
+import com.wuming.musicFW.managers.PermissionManager
 import com.wuming.musicFW.models.LyricsLine
 import com.wuming.musicFW.models.SongInfo
 import com.wuming.musicFW.services.FloatingLyricsService
+import com.wuming.musicFW.services.MediaNotificationService
 import com.wuming.musicFW.services.NetEaseMusicApi
 import com.wuming.musicFW.utils.LogHelper
+import com.wuming.musicFW.utils.LyricsParser
 import com.wuming.musicFW.utils.TimeFormatter
-import com.wuming.musicFW.services.NotificationListenerService
 import kotlinx.coroutines.*
 
 class MainActivity : AppCompatActivity() {
 
-    companion object {
-        private const val NOTIFICATION_PERMISSION_CODE = 1001
-        private const val OVERLAY_PERMISSION_CODE = 1002
-    }
+    private lateinit var debugLog: TextView
+    private lateinit var songName: TextView
+    private lateinit var artist: TextView
+    private lateinit var album: TextView
+    private lateinit var positionTv: TextView
+    private lateinit var lyricsTv: TextView
+    private lateinit var listenBtn: Button
+    private lateinit var permissionBtn: Button
+    private lateinit var floatingBtn: Button
+    private lateinit var statusTv: TextView
 
-    private lateinit var debugLogTextView: TextView
-    private lateinit var songNameTextView: TextView
-    private lateinit var artistTextView: TextView
-    private lateinit var albumTextView: TextView
-    private lateinit var packageNameTextView: TextView
-    private lateinit var positionTextView: TextView
-    private lateinit var lyricsTextView: TextView
-    private lateinit var listenButton: Button
-    private lateinit var permissionButton: Button
-    private lateinit var floatingButton: Button
-    private lateinit var statusTextView: TextView
-
-    private var isListening = false
-    private var isFloatingEnabled = false
-    private var currentSongInfo: SongInfo? = null
-    private var currentLyrics: List<LyricsLine> = emptyList()
-    private var currentPosition: Long = 0
-    private var currentLyricIndex = -1
-    
-    private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private var positionUpdateJob: Job? = null
+    private var listening = false
+    private var floating = false
+    private var currentSong: SongInfo? = null
+    private var lyrics: List<LyricsLine> = emptyList()
+    private var lyricIdx = -1
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var positionJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        
         initViews()
         setupListeners()
-        setupNotificationService()
-    }
-
-    private fun initViews() {
-        debugLogTextView = findViewById(R.id.debugLogTextView)
-        songNameTextView = findViewById(R.id.songNameTextView)
-        artistTextView = findViewById(R.id.artistTextView)
-        albumTextView = findViewById(R.id.albumTextView)
-        packageNameTextView = findViewById(R.id.packageNameTextView)
-        positionTextView = findViewById(R.id.positionTextView)
-        lyricsTextView = findViewById(R.id.lyricsTextView)
-        listenButton = findViewById(R.id.listenButton)
-        permissionButton = findViewById(R.id.permissionButton)
-        floatingButton = findViewById(R.id.floatingButton)
-        statusTextView = findViewById(R.id.statusTextView)
-    }
-
-    private fun setupListeners() {
-        listenButton.setOnClickListener {
-            if (isListening) {
-                stopListening()
-            } else {
-                startListening()
-            }
-        }
-
-        permissionButton.setOnClickListener {
-            requestNotificationPermission()
-        }
-
-        floatingButton.setOnClickListener {
-            toggleFloating()
-        }
-    }
-
-    private fun setupNotificationService() {
-        NotificationListenerService.setCallbacks(
-            onSongChanged = { songInfo: SongInfo ->
-                runOnUiThread {
-                    handleSongChanged(songInfo)
-                }
-            },
-            onPositionUpdate = { position: Long ->
-                runOnUiThread {
-                    handlePositionUpdate(position)
-                }
-            }
+        MediaNotificationService.setCallbacks(
+            onSongChanged = { s -> runOnUiThread { onSongChange(s) } },
+            onPositionUpdate = { p -> runOnUiThread { onPosition(p) } }
         )
-        
         log("应用已初始化")
     }
 
-    private fun handleSongChanged(songInfo: SongInfo) {
-        log("歌曲信息更新: ${songInfo.title} - ${songInfo.artist}")
-        
-        currentSongInfo = songInfo
-        songNameTextView.text = "歌曲: ${songInfo.title}"
-        artistTextView.text = "歌手: ${songInfo.artist}"
-        albumTextView.text = "专辑: ${songInfo.album}"
-        
-        if (!isListening) {
-            isListening = true
-            updateListenButton()
-        }
-        
-        fetchLyrics(songInfo.artist, songInfo.title)
+    private fun initViews() {
+        debugLog = findViewById(R.id.debugLogTextView)
+        songName = findViewById(R.id.songNameTextView)
+        artist = findViewById(R.id.artistTextView)
+        album = findViewById(R.id.albumTextView)
+        positionTv = findViewById(R.id.positionTextView)
+        lyricsTv = findViewById(R.id.lyricsTextView)
+        listenBtn = findViewById(R.id.listenButton)
+        permissionBtn = findViewById(R.id.permissionButton)
+        floatingBtn = findViewById(R.id.floatingButton)
+        statusTv = findViewById(R.id.statusTextView)
     }
 
-    private fun handlePositionUpdate(position: Long) {
-        currentPosition = position
-        positionTextView.text = "位置: ${TimeFormatter.formatTime(position)}"
-        
-        if (currentLyrics.isNotEmpty()) {
-            val index = com.wuming.musicFW.utils.LyricsParser.findCurrentLineIndex(currentLyrics, position)
-            if (index >= 0 && index != currentLyricIndex) {
-                currentLyricIndex = index
-                updateLyricsDisplay()
-                
-                if (isFloatingEnabled) {
-                    val lyricText = currentLyrics[index].text
-                    FloatingLyricsService.requestUpdate(this, lyricText)
-                }
-            }
+    private fun setupListeners() {
+        listenBtn.setOnClickListener {
+            if (listening) stopListening() else startListening()
         }
+        permissionBtn.setOnClickListener {
+            PermissionManager.requestPostNotificationPermission(this, this)
+            PermissionManager.openNotificationListenerSettings(this)
+        }
+        floatingBtn.setOnClickListener { toggleFloating() }
     }
 
-    private fun fetchLyrics(artist: String, songName: String) {
-        coroutineScope.launch {
+    // ── 歌曲 / 位置回调 ──────────────────────────────────
+
+    private fun onSongChange(s: SongInfo) {
+        log("歌曲: ${s.title} - ${s.artist}")
+        currentSong = s
+        songName.text = s.title
+        artist.text = s.artist
+        album.text = s.album
+        if (!listening) { listening = true; updateListenText() }
+        fetchLyrics(s.artist, s.title)
+    }
+
+    private fun onPosition(pos: Long) {
+        positionTv.text = TimeFormatter.formatTime(pos)
+        if (lyrics.isEmpty()) return
+        val idx = LyricsParser.findCurrentLineIndex(lyrics, pos)
+        if (idx < 0 || idx == lyricIdx) return
+        lyricIdx = idx
+        renderLyrics()
+        if (floating) FloatingLyricsService.requestUpdate(this, lyrics[idx].text, currentSong?.title ?: "")
+    }
+
+    // ── 歌词 ─────────────────────────────────────────────
+
+    private fun fetchLyrics(art: String, name: String) {
+        scope.launch {
             try {
-                log("搜索歌词: $artist - $songName")
-                val searchResult = NetEaseMusicApi.searchSong("$artist $songName")
-                
-                if (searchResult != null) {
-                    val songId = searchResult.get("id")?.asLong
-                    if (songId != null) {
-                        log("找到歌曲, ID: $songId")
-                        val lyricResult = NetEaseMusicApi.getLyric(songId)
-                        
-                        if (lyricResult != null && lyricResult.has("lrc")) {
-                            val lrc = lyricResult.getAsJsonObject("lrc")
-                            val lyricText = lrc.get("lyric")?.asString ?: ""
-                            
-                            if (lyricText.isNotEmpty()) {
-                                currentLyrics = com.wuming.musicFW.utils.LyricsParser.parseLyric(lyricText)
-                                log("解析歌词 ${currentLyrics.size} 行")
-                                updateLyricsDisplay()
-                            } else {
-                                lyricsTextView.text = "暂无歌词"
-                                log("暂无歌词")
-                            }
-                        } else {
-                            lyricsTextView.text = "暂无歌词"
-                            log("暂无歌词")
-                        }
-                    } else {
-                        log("未找到歌曲")
-                    }
-                } else {
-                    log("搜索失败")
+                log("搜索歌词: $art - $name")
+                val result = NetEaseMusicApi.searchSong("$art $name") ?: run {
+                    log("搜索失败"); return@launch
                 }
+                val id = result.get("id")?.asLong ?: run { log("未找到歌曲 ID"); return@launch }
+                log("找到歌曲 ID: $id")
+                val lyricJson = NetEaseMusicApi.getLyric(id) ?: run { log("获取歌词失败"); return@launch }
+                val lrc = lyricJson.getAsJsonObject("lrc") ?: run {
+                    lyricsTv.text = "暂无歌词"; return@launch
+                }
+                val text = lrc.get("lyric")?.asString ?: ""
+                if (text.isEmpty()) { lyricsTv.text = "暂无歌词"; return@launch }
+                lyrics = LyricsParser.parseLyric(text)
+                log("歌词 ${lyrics.size} 行")
+                renderLyrics()
             } catch (e: Exception) {
-                log("获取歌词出错: ${e.message}")
-                e.printStackTrace()
+                log("歌词出错: ${e.message}")
             }
         }
     }
 
-    private fun updateLyricsDisplay() {
-        if (currentLyrics.isEmpty()) {
-            lyricsTextView.text = "暂无歌词"
-            return
-        }
-
-        val displayText = buildString {
-            for ((index, line) in currentLyrics.withIndex()) {
-                val prefix = if (index == currentLyricIndex) "> " else "  "
-                append("$prefix${line.text}\n")
+    private fun renderLyrics() {
+        if (lyrics.isEmpty()) { lyricsTv.text = "暂无歌词"; return }
+        lyricsTv.text = buildString {
+            for ((i, l) in lyrics.withIndex()) {
+                append(if (i == lyricIdx) "▸ " else "  ")
+                append(l.text).append('\n')
             }
         }
-        lyricsTextView.text = displayText
     }
+
+    // ── 监听控制 ─────────────────────────────────────────
 
     private fun startListening() {
-        log("检查通知权限...")
-        if (!checkNotificationPermission()) {
-            log("需要通知权限，正在请求...")
-            requestNotificationPermission()
+        if (!PermissionManager.hasNotificationListenerPermission(this)) {
+            log("未开启通知监听权限")
+            PermissionManager.openNotificationListenerSettings(this)
             return
         }
-        
-        log("权限已授权，开始监听")
-        isListening = true
-        updateListenButton()
+        listening = true
+        updateListenText()
         log("开始监听通知")
     }
 
     private fun stopListening() {
-        isListening = false
-        updateListenButton()
-        log("停止监听通知")
+        listening = false
+        updateListenText()
+        log("停止监听")
     }
 
-    private fun updateListenButton() {
-        listenButton.text = if (isListening) "停止监听" else "开始监听"
-        listenButton.isEnabled = true
+    private fun updateListenText() {
+        listenBtn.text = if (listening) "停止监听" else "开始监听"
     }
+
+    // ── 悬浮窗 ───────────────────────────────────────────
 
     private fun toggleFloating() {
-        if (isFloatingEnabled) {
-            hideFloating()
-        } else {
-            showFloating()
-        }
+        if (floating) hideFloating() else showFloating()
     }
 
     private fun showFloating() {
-        if (!Settings.canDrawOverlays(this)) {
+        if (!PermissionManager.hasOverlayPermission(this)) {
             log("需要悬浮窗权限")
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")
-            )
-            startActivityForResult(intent, OVERLAY_PERMISSION_CODE)
+            PermissionManager.openOverlaySettings(this)
             return
         }
-
-        log("悬浮窗权限检查通过")
-        
-        val lyricText = if (currentLyricIndex >= 0 && currentLyrics.isNotEmpty()) {
-            currentLyrics[currentLyricIndex].text
-        } else {
-            "歌词加载中..."
-        }
-
-        log("准备显示悬浮窗: $lyricText")
-        FloatingLyricsService.requestShow(this, lyricText)
-        isFloatingEnabled = true
-        floatingButton.text = "关闭悬浮"
+        val text = if (lyricIdx >= 0 && lyrics.isNotEmpty()) lyrics[lyricIdx].text
+                   else "歌词加载中..."
+        FloatingLyricsService.requestShow(this, text, currentSong?.title ?: "")
+        floating = true
+        floatingBtn.text = "关闭悬浮"
         log("悬浮窗已开启")
     }
 
     private fun hideFloating() {
         FloatingLyricsService.requestHide(this)
-        isFloatingEnabled = false
-        floatingButton.text = "开启悬浮"
+        floating = false
+        floatingBtn.text = "开启悬浮"
         log("悬浮窗已关闭")
     }
 
-    private fun requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) 
-                != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(
-                    this,
-                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                    NOTIFICATION_PERMISSION_CODE
-                )
-            }
-        }
-        
-        val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-        startActivity(intent)
-        log("请在设置中开启通知监听权限")
-    }
+    // ── 日志 ─────────────────────────────────────────────
 
-    private fun checkNotificationPermission(): Boolean {
-        val enabledListeners = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
-        val hasPermission = enabledListeners != null && enabledListeners.contains(packageName)
-        log("通知权限检查: $hasPermission")
-        return hasPermission
-    }
-
-    private fun checkNotificationListenerServiceEnabled(): Boolean {
-        val enabledListeners = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
-        val serviceName = "com.wuming.musicFW.services.NotificationListenerService"
-        val isEnabled = enabledListeners != null && enabledListeners.contains(serviceName)
-        log("通知监听服务状态: $isEnabled")
-        return isEnabled
-    }
-
-    private fun log(message: String) {
-        val timestamp = TimeFormatter.formatTimestamp(System.currentTimeMillis())
-        val logMessage = "$timestamp $message\n"
-        
+    private fun log(msg: String) {
+        val ts = TimeFormatter.formatTimestamp(System.currentTimeMillis())
         runOnUiThread {
-            val currentText = debugLogTextView.text.toString()
-            val newText = logMessage + currentText
-            debugLogTextView.text = if (newText.length > 1000) {
-                newText.substring(0, 1000)
-            } else {
-                newText
-            }
+            val s = "$ts $msg\n"
+            val cur = debugLog.text.toString()
+            debugLog.text = if (cur.length > 1000) (s + cur).substring(0, 1000) else s + cur
         }
-        
-        LogHelper.d(message)
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        when (requestCode) {
-            NOTIFICATION_PERMISSION_CODE -> {
-                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    log("通知权限已授予")
-                } else {
-                    log("通知权限被拒绝")
-                }
-            }
-        }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        when (requestCode) {
-            OVERLAY_PERMISSION_CODE -> {
-                if (Settings.canDrawOverlays(this)) {
-                    log("悬浮窗权限已授予")
-                    showFloating()
-                } else {
-                    log("悬浮窗权限被拒绝")
-                }
-            }
-        }
+        LogHelper.d(msg)
     }
 
     override fun onDestroy() {
+        scope.cancel()
+        positionJob?.cancel()
+        if (floating) FloatingLyricsService.requestHide(this)
         super.onDestroy()
-        coroutineScope.cancel()
-        positionUpdateJob?.cancel()
-        
-        if (isFloatingEnabled) {
-            FloatingLyricsService.requestHide(this)
-        }
     }
 }

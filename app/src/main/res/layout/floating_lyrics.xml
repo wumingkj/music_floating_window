@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/floatingRoot"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/floating_bg"
+    android:padding="16dp"
+    android:minWidth="200dp"
+    android:elevation="6dp">
+
+    <!-- 拖拽指示条 -->
+    <View
+        android:layout_width="36dp"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal"
+        android:background="#55FFFFFF"
+        android:layout_marginBottom="8dp" />
+
+    <!-- 歌曲标题 -->
+    <TextView
+        android:id="@+id/floatingSongTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="#FFFFFF"
+        android:singleLine="true"
+        android:ellipsize="end" />
+
+    <!-- 当前歌词 -->
+    <TextView
+        android:id="@+id/floatingLyricText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="歌词加载中..."
+        android:textSize="18sp"
+        android:textColor="#FFD700"
+        android:paddingTop="4dp"
+        android:maxWidth="280dp" />
+
+    <!-- 关闭按钮 -->
+    <TextView
+        android:id="@+id/floatingCloseBtn"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
+        android:layout_gravity="end"
+        android:layout_marginTop="4dp"
+        android:text="✕"
+        android:textSize="14sp"
+        android:textColor="#88FFFFFF"
+        android:gravity="center" />
+
+</LinearLayout>

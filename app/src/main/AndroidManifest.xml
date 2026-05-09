@@ -26,9 +26,9 @@
             </intent-filter>
         </activity>
 
-        <!-- 通知监听服务 -->
+        <!-- 媒体通知监听服务 -->
         <service
-            android:name="com.wuming.musicFW.services.NotificationListenerService"
+            android:name="com.wuming.musicFW.services.MediaNotificationService"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
             <intent-filter>
@@ -39,8 +39,7 @@
         <!-- 悬浮窗歌词服务 -->
         <service
             android:name="com.wuming.musicFW.services.FloatingLyricsService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:exported="false" />
 
         <!-- BootReceiver -->
         <receiver

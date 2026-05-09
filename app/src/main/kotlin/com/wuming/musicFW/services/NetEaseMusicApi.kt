@@ -5,53 +5,55 @@ import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.*
-import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import com.wuming.musicFW.utils.LogHelper
 
 object NetEaseMusicApi {
-    private const val SEARCH_URL = "https://music.163.com/api/search/get"
-    private const val BASE_URL = "http://music.163.com/api"
-    private const val REFERER = "http://music.163.com/"
+    private const val SEARCH_URL = "https://music.163.com/api/search/pc"
+    private const val BASE_URL = "https://music.163.com/api"
+    private const val REFERER = "https://music.163.com/"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
+        .followRedirects(true)
         .build()
 
     private val gson = Gson()
 
     suspend fun searchSong(keyword: String): JsonObject? = withContext(Dispatchers.IO) {
         try {
-            val encodedKeyword = URLEncoder.encode(keyword, "UTF-8")
-            val formBody = FormBody.Builder()
+            val body = FormBody.Builder()
+                .add("s", keyword)
                 .add("type", "1")
-                .add("s", encodedKeyword)
+                .add("offset", "0")
+                .add("limit", "5")
                 .build()
 
             val request = Request.Builder()
                 .url(SEARCH_URL)
-                .post(formBody)
+                .post(body)
                 .header("Referer", REFERER)
-                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .header("Cookie", "appver=2.10.0")
                 .build()
 
             val response = client.newCall(request).execute()
-            val body = response.body?.string() ?: return@withContext null
-            val json = gson.fromJson(body, JsonObject::class.java)
+            val bodyStr = response.body?.string() ?: return@withContext null
+            LogHelper.d("搜索响应: ${bodyStr.take(200)}")
+            val json = gson.fromJson(bodyStr, JsonObject::class.java)
 
             if (json.get("code")?.asInt == 200) {
                 val result = json.getAsJsonObject("result")
-                if (result != null && result.has("songs")) {
-                    val songs = result.getAsJsonArray("songs")
-                    if (songs.size() > 0) {
-                        return@withContext songs[0].asJsonObject
-                    }
+                val songs = result?.getAsJsonArray("songs")
+                if (songs != null && songs.size() > 0) {
+                    return@withContext songs[0].asJsonObject
                 }
             }
             null
         } catch (e: Exception) {
-            e.printStackTrace()
+            LogHelper.e("搜索失败: ${e.message}")
             null
         }
     }
@@ -59,19 +61,20 @@ object NetEaseMusicApi {
     suspend fun getLyric(songId: Long): JsonObject? = withContext(Dispatchers.IO) {
         try {
             val url = "$BASE_URL/song/lyric?id=$songId&lv=1&kv=1&tv=-1"
-            
             val request = Request.Builder()
                 .url(url)
                 .header("Referer", REFERER)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .header("Cookie", "appver=2.10.0")
                 .get()
                 .build()
 
             val response = client.newCall(request).execute()
-            val body = response.body?.string() ?: return@withContext null
-            
-            gson.fromJson(body, JsonObject::class.java)
+            val bodyStr = response.body?.string() ?: return@withContext null
+            LogHelper.d("歌词响应: ${bodyStr.take(100)}")
+            gson.fromJson(bodyStr, JsonObject::class.java)
         } catch (e: Exception) {
-            e.printStackTrace()
+            LogHelper.e("获取歌词失败: ${e.message}")
             null
         }
     }

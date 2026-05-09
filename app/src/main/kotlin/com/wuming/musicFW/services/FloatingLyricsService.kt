@@ -1,141 +1,125 @@
-package com.wuming.musicFW.services
+﻿package com.wuming.musicFW.services
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
-import com.wuming.musicFW.MainActivity
+import android.provider.Settings
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.TextView
 import com.wuming.musicFW.R
-import com.wuming.musicFW.ui.floating.FloatingWindowManager
 import com.wuming.musicFW.utils.LogHelper
 
 class FloatingLyricsService : Service() {
+    private var wm: WindowManager? = null
+    private var floatView: View? = null
+    private var params: WindowManager.LayoutParams? = null
+    private var lastX = 0f; private var lastY = 0f; private var isDragging = false
 
     companion object {
-        private const val NOTIFICATION_ID = 1001
-        private const val CHANNEL_ID = "floating_service_channel"
-        private const val CHANNEL_NAME = "悬浮窗服务"
-        
         private var instance: FloatingLyricsService? = null
-        
+        private var songTitle = ""
         fun isRunning(): Boolean = instance != null
-        
-        fun requestShow(context: Context, lyrics: String) {
-            val intent = Intent(context, FloatingLyricsService::class.java).apply {
-                action = "SHOW"
-                putExtra("lyrics", lyrics)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+        fun requestShow(ctx: Context, lyric: String, title: String = "") {
+            songTitle = title
+            ctx.startService(Intent(ctx, FloatingLyricsService::class.java).apply {
+                action = "SHOW"; putExtra("lyrics", lyric)
+            })
         }
-        
-        fun requestHide(context: Context) {
-            val intent = Intent(context, FloatingLyricsService::class.java).apply {
-                action = "HIDE"
-            }
-            context.startService(intent)
+        fun requestHide(ctx: Context) {
+            ctx.startService(Intent(ctx, FloatingLyricsService::class.java).apply { action = "HIDE" })
         }
-        
-        fun requestUpdate(context: Context, lyrics: String) {
-            val intent = Intent(context, FloatingLyricsService::class.java).apply {
-                action = "UPDATE"
-                putExtra("lyrics", lyrics)
-            }
-            context.startService(intent)
+        fun requestUpdate(ctx: Context, lyric: String, title: String = "") {
+            songTitle = title
+            ctx.startService(Intent(ctx, FloatingLyricsService::class.java).apply {
+                action = "UPDATE"; putExtra("lyrics", lyric)
+            })
         }
     }
-
-    private var floatingWindowManager: FloatingWindowManager? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
-        super.onCreate()
-        instance = this
+        super.onCreate(); instance = this
+        wm = getSystemService(WINDOW_SERVICE) as WindowManager
         LogHelper.d("FloatingLyricsService 创建")
-        createNotificationChannel()
-        floatingWindowManager = FloatingWindowManager(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 前台服务必需调用
-        startForeground(NOTIFICATION_ID, createNotification())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            LogHelper.d("无悬浮窗权限"); return START_NOT_STICKY
+        }
         when (intent?.action) {
-            "SHOW" -> {
-                val lyrics = intent.getStringExtra("lyrics") ?: ""
-                showFloatingWindow(lyrics)
-            }
-            "UPDATE" -> {
-                val lyrics = intent.getStringExtra("lyrics") ?: ""
-                updateLyrics(lyrics)
-            }
-            "HIDE" -> {
-                hideFloatingWindow()
-            }
+            "SHOW" -> showFloating(intent.getStringExtra("lyrics") ?: "")
+            "UPDATE" -> updateLyrics(intent.getStringExtra("lyrics") ?: "")
+            "HIDE" -> hideFloating()
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        hideFloatingWindow()
-        floatingWindowManager = null
-        instance = null
+    private fun showFloating(lyrics: String) {
+        if (floatView != null) { updateLyrics(lyrics); return }
+
+        floatView = LayoutInflater.from(this).inflate(R.layout.floating_lyrics, null)
+        floatView!!.findViewById<TextView>(R.id.floatingLyricText).text = lyrics
+        floatView!!.findViewById<TextView>(R.id.floatingSongTitle).text =
+            songTitle.ifEmpty { "歌词悬浮窗" }
+        floatView!!.findViewById<View>(R.id.floatingCloseBtn).setOnClickListener { hideFloating() }
+        floatView!!.setOnTouchListener { v, e -> onTouch(v, e) }
+
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else WindowManager.LayoutParams.TYPE_PHONE
+
+        params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START; x = 0; y = 200 }
+
+        try { wm?.addView(floatView, params); LogHelper.d("悬浮窗已显示: $lyrics")
+        } catch (e: Exception) { LogHelper.e("显示悬浮窗失败: ${e.message}") }
     }
 
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "保持悬浮窗服务运行"
-                setShowBadge(false)
+    private fun onTouch(v: View, e: MotionEvent): Boolean {
+        val lp = params ?: return false
+        when (e.action) {
+            MotionEvent.ACTION_DOWN -> { lastX = e.rawX; lastY = e.rawY; isDragging = false }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = e.rawX - lastX; val dy = e.rawY - lastY
+                if (!isDragging && (kotlin.math.abs(dx) > 10 || kotlin.math.abs(dy) > 10)) isDragging = true
+                if (isDragging) {
+                    lp.x = (lp.x + dx).toInt(); lp.y = (lp.y + dy).toInt()
+                    try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {}
+                    lastX = e.rawX; lastY = e.rawY
+                }
             }
-            
-            val notificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager.createNotificationChannel(channel)
+            MotionEvent.ACTION_UP -> if (!isDragging) v.performClick()
         }
-    }
-
-    private fun createNotification(): Notification {
-        val pendingIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("歌词悬浮窗")
-            .setContentText("正在运行")
-            .setSmallIcon(R.drawable.ic_launcher)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .build()
-    }
-
-    private fun showFloatingWindow(lyrics: String) {
-        LogHelper.d("显示悬浮窗: $lyrics")
-        floatingWindowManager?.show(lyrics)
+        return true
     }
 
     private fun updateLyrics(lyrics: String) {
-        LogHelper.d("更新歌词: $lyrics")
-        floatingWindowManager?.updateLyrics(lyrics)
+        if (floatView == null) { showFloating(lyrics); return }
+        floatView!!.findViewById<TextView>(R.id.floatingLyricText).text = lyrics
+        floatView!!.findViewById<TextView>(R.id.floatingSongTitle).text =
+            songTitle.ifEmpty { "歌词悬浮窗" }
+        LogHelper.d("歌词更新: $lyrics")
     }
 
-    private fun hideFloatingWindow() {
-        LogHelper.d("隐藏悬浮窗")
-        floatingWindowManager?.hide()
+    private fun hideFloating() {
+        floatView?.let {
+            try { wm?.removeView(it) } catch (_: Exception) {}
+            floatView = null; params = null; LogHelper.d("悬浮窗已隐藏")
+        }
     }
+
+    override fun onDestroy() { hideFloating(); instance = null; super.onDestroy() }
 }
