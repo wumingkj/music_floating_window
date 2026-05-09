@@ -13,6 +13,7 @@ import kotlinx.coroutines.*
 class MediaNotificationService : NotificationListenerService() {
 
     companion object {
+        var onAlbumArtChanged: ((android.graphics.Bitmap?) -> Unit)? = null
         var onSongChanged: ((SongInfo) -> Unit)? = null
         var onPositionUpdate: ((Long) -> Unit)? = null
         var onLyricLine: ((String) -> Unit)? = null
@@ -21,11 +22,13 @@ class MediaNotificationService : NotificationListenerService() {
         fun setCallbacks(
             onSongChanged: ((SongInfo) -> Unit)? = null,
             onPositionUpdate: ((Long) -> Unit)? = null,
-            onLyricLine: ((String) -> Unit)? = null
+            onLyricLine: ((String) -> Unit)? = null,
+            onAlbumArtChanged: ((android.graphics.Bitmap?) -> Unit)? = null
         ) {
             this.onSongChanged = onSongChanged
             this.onPositionUpdate = onPositionUpdate
             this.onLyricLine = onLyricLine
+            this.onAlbumArtChanged = onAlbumArtChanged
         }
     }
 
@@ -137,12 +140,17 @@ class MediaNotificationService : NotificationListenerService() {
         val title = meta.getString(android.media.MediaMetadata.METADATA_KEY_TITLE) ?: return
         val artist = meta.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST) ?: "未知艺术家"
         val album = meta.getString(android.media.MediaMetadata.METADATA_KEY_ALBUM) ?: ""
+        val art = meta.getBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART)
+            ?: meta.getBitmap(android.media.MediaMetadata.METADATA_KEY_ART)
 
-        val info = SongInfo(title, artist, album)
-        if (currentSongInfo != info) {
+        val info = SongInfo(title, artist, album, art)
+        if (currentSongInfo?.title != title || currentSongInfo?.artist != artist) {
             currentSongInfo = info
             onSongChanged?.invoke(info)
+            onAlbumArtChanged?.invoke(art)
             LogHelper.d("歌曲更新: $title - $artist")
+        } else if (currentSongInfo?.albumArt !== art) {
+            onAlbumArtChanged?.invoke(art)
         }
 
         // 如果 controller 变了，重新注册回调

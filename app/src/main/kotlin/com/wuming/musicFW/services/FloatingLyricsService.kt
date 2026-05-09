@@ -1,9 +1,12 @@
 ﻿package com.wuming.musicFW.services
 
+import android.animation.ObjectAnimator
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
@@ -14,8 +17,12 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
+import android.widget.ImageView
 import android.widget.TextView
+import android.widget.Toast
 import com.wuming.musicFW.R
 import com.wuming.musicFW.managers.AppSettings
 import com.wuming.musicFW.utils.LogHelper
@@ -32,6 +39,8 @@ class FloatingLyricsService : Service() {
     private var fullLyric = ""
     private var lyricTv: TextView? = null
     private var titleTv: TextView? = null
+    private var albumArtIv: ImageView? = null
+    private var rotateAnim: ObjectAnimator? = null
 
     companion object {
         private var instance: FloatingLyricsService? = null
@@ -53,6 +62,11 @@ class FloatingLyricsService : Service() {
                 action = "UPDATE"; putExtra("lyrics", lyric)
             })
         }
+        fun requestUpdateArt(ctx: Context, bitmap: Bitmap?) {
+            ctx.startService(Intent(ctx, FloatingLyricsService::class.java).apply {
+                action = "UPDATE_ART"; putExtra("art", bitmap)
+            })
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -69,8 +83,8 @@ class FloatingLyricsService : Service() {
         when (intent?.action) {
             "SHOW" -> showFloating(intent.getStringExtra("lyrics") ?: "")
             "UPDATE" -> updateLyrics(intent.getStringExtra("lyrics") ?: "")
+            "UPDATE_ART" -> updateAlbumArt(intent.getParcelableExtra("art"))
             "HIDE" -> hideFloating()
-            "LOCK" -> { isLocked = !isLocked; updateLockIcon() }
         }
         return START_NOT_STICKY
     }
@@ -80,16 +94,35 @@ class FloatingLyricsService : Service() {
         floatView = LayoutInflater.from(this).inflate(R.layout.floating_lyrics, null)
         lyricTv = floatView!!.findViewById(R.id.floatingLyricText)
         titleTv = floatView!!.findViewById(R.id.floatingSongTitle)
+        albumArtIv = floatView!!.findViewById(R.id.floatingAlbumArt)
         fullLyric = lyrics; titleTv?.text = songTitle.ifEmpty { "歌词悬浮窗" }
 
         floatView!!.findViewById<View>(R.id.floatingCloseBtn).setOnClickListener {
             hideFloating(); onCloseCallback?.invoke()
         }
-        floatView!!.findViewById<View>(R.id.floatingLockBtn).setOnClickListener {
-            isLocked = !isLocked; updateLockIcon()
+        // 长按封面切换锁定
+        albumArtIv?.setOnLongClickListener {
+            isLocked = !isLocked
+            Toast.makeText(this, if (isLocked) "已锁定" else "已解锁", Toast.LENGTH_SHORT).show()
+            true
         }
         floatView!!.setOnTouchListener { v, e -> if (!isLocked) onTouch(v, e) else true }
-        updateLockIcon()
+
+        // 封面圆形裁切 + 旋转
+        albumArtIv?.let { iv ->
+            iv.outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setOval(0, 0, view.width, view.height)
+                }
+            }
+            iv.clipToOutline = true
+            rotateAnim = ObjectAnimator.ofFloat(iv, "rotation", 0f, 360f).apply {
+                duration = 20000
+                repeatCount = ObjectAnimator.INFINITE
+                interpolator = android.view.animation.LinearInterpolator()
+            }
+            iv.post { rotateAnim?.start() }
+        }
 
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -164,10 +197,6 @@ class FloatingLyricsService : Service() {
     }
     private fun stopTyping() { typingJob?.let { mainHandler.removeCallbacks(it) }; typingJob = null }
 
-    private fun updateLockIcon() {
-        floatView?.findViewById<TextView>(R.id.floatingLockBtn)?.text = if (isLocked) "\uD83D\uDD12" else "\uD83D\uDD13"
-    }
-
     private fun onTouch(v: View, e: MotionEvent): Boolean {
         val lp = params ?: return false
         when (e.action) {
@@ -186,6 +215,10 @@ class FloatingLyricsService : Service() {
         return true
     }
 
+    private fun updateAlbumArt(bitmap: Bitmap?) {
+        albumArtIv?.setImageBitmap(bitmap)
+    }
+
     private fun updateLyrics(lyrics: String) {
         if (floatView == null) { showFloating(lyrics); return }
         fullLyric = lyrics
@@ -195,7 +228,7 @@ class FloatingLyricsService : Service() {
     }
 
     private fun hideFloating() {
-        stopRainbow(); stopTyping()
+        stopRainbow(); stopTyping(); rotateAnim?.cancel(); rotateAnim = null
         floatView?.let {
             try { wm?.removeView(it) } catch (_: Exception) {}
             floatView = null; params = null

@@ -51,7 +51,8 @@ class MainActivity : AppCompatActivity() {
         MediaNotificationService.setCallbacks(
             onSongChanged = { s -> runOnUiThread { onSongChange(s) } },
             onPositionUpdate = { p -> runOnUiThread { onPosition(p) } },
-            onLyricLine = { lyric -> runOnUiThread { onNotifyLyric(lyric) } }
+            onLyricLine = { lyric -> runOnUiThread { onNotifyLyric(lyric) } },
+            onAlbumArtChanged = { bmp -> runOnUiThread { onAlbumArt(bmp) } }
         )
         FloatingLyricsService.onCloseCallback = {
             runOnUiThread { floating = false; adapter.getMusic()?.floatingBtn?.text = "开启悬浮"; log("悬浮窗已关闭") }
@@ -92,9 +93,18 @@ class MainActivity : AppCompatActivity() {
         currentSong = s
         adapter.getMusic()?.let { m ->
             m.songName.text = s.title; m.artist.text = s.artist; m.album.text = s.album
+            if (s.albumArt != null) m.albumArtIv.setImageBitmap(s.albumArt)
+        }
+        if (floating && s.albumArt != null) {
+            FloatingLyricsService.requestUpdateArt(this, s.albumArt)
         }
         if (!listening) { listening = true; updateMusicBtn() }
         fetchLyrics(s.artist, s.title)
+    }
+
+    private fun onAlbumArt(bmp: android.graphics.Bitmap?) {
+        adapter.getMusic()?.albumArtIv?.setImageBitmap(bmp)
+        if (floating) FloatingLyricsService.requestUpdateArt(this, bmp)
     }
 
     private fun onPosition(pos: Long) {
@@ -179,8 +189,13 @@ class MainActivity : AppCompatActivity() {
         }
         m.lyricsTv.post {
             val lineIdx = safeIdx + padLines
-            val ly = m.lyricsTv.layout?.getLineTop(lineIdx) ?: return@post
-            m.lyricsScroll.smoothScrollTo(0, ly - m.lyricsScroll.height / 2)
+            val layout = m.lyricsTv.layout ?: return@post
+            // 当前行垂直中心
+            val lineCenter = (layout.getLineTop(lineIdx) + layout.getLineBottom(lineIdx)) / 2f
+            // 父控件 ScrollView 可见区域高度（去掉 padding）
+            val parentVisible = m.lyricsScroll.height - m.lyricsScroll.paddingTop - m.lyricsScroll.paddingBottom
+            val scrollY = (lineCenter - parentVisible / 2f).toInt().coerceAtLeast(0)
+            m.lyricsScroll.smoothScrollTo(0, scrollY)
         }
     }
 

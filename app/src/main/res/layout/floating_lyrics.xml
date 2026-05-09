@@ -12,42 +12,36 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal">
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+        <ImageView
+            android:id="@+id/floatingAlbumArt"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:scaleType="centerCrop"
+            android:src="@drawable/ic_launcher"
+            android:contentDescription="封面" />
         <TextView
-            android:id="@+id/floatingLockBtn"
-            android:layout_width="30dp"
-            android:layout_height="30dp"
-            android:text="\uD83D\uDD13"
-            android:textSize="16sp"
-            android:gravity="center" />
-        <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+            android:id="@+id/floatingSongTitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text=""
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:layout_marginStart="8dp" />
         <TextView
             android:id="@+id/floatingCloseBtn"
             android:layout_width="30dp"
             android:layout_height="30dp"
             android:text="\u2715"
-            android:textSize="16sp"
+            android:textSize="14sp"
             android:textColor="#88FFFFFF"
             android:gravity="center" />
     </LinearLayout>
-
-    <View
-        android:layout_width="36dp"
-        android:layout_height="3dp"
-        android:layout_gravity="center_horizontal"
-        android:background="#55FFFFFF"
-        android:layout_marginBottom="6dp" />
-
-    <TextView
-        android:id="@+id/floatingSongTitle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text=""
-        android:textSize="13sp"
-        android:textStyle="bold"
-        android:textColor="#FFFFFF"
-        android:singleLine="true"
-        android:ellipsize="end" />
 
     <TextView
         android:id="@+id/floatingLyricText"

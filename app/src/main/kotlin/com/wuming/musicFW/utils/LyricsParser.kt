@@ -4,7 +4,7 @@ import com.wuming.musicFW.models.LyricsLine
 import java.util.regex.Pattern
 
 object LyricsParser {
-    private val LRC_PATTERN = Pattern.compile("\\[(\\d{2}):(\\d{2})\\.(\\d{2,3})\\](.*)")
+    private val LRC_PATTERN = Pattern.compile("\\[(\\d{2}):(\\d{2})[.:](\\d{2,3})\\](.*)")
 
     fun parseLyric(lyricText: String): List<LyricsLine> {
         if (lyricText.isEmpty()) {
